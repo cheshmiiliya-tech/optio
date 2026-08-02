@@ -1,0 +1,8 @@
+# Normalise line endings inside the repository to LF.
+# Working copies still get the platform's native endings on checkout.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.gif binary
+*.woff2 binary

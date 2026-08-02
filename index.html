@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Marquee — an entertainment guide with an explainable AI recommendation and prediction layer.">
+  <meta name="color-scheme" content="light dark">
+  <title>Marquee — Tonight's Lineup</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>%F0%9F%8E%AC</text></svg>">
+  <link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+
+<div class="wrap">
+
+  <header class="topbar">
+    <div class="topbar-in">
+      <div class="brand">Mar<em>q</em>uee</div>
+      <div class="onair"><span class="pulse"></span>On air</div>
+      <div class="topbar-spacer"></div>
+      <div class="clock" id="clock">—</div>
+      <button class="model-chip" id="modelChip" title="Jump to your taste model">
+        <span class="lamp"></span>
+        <span class="mc-txt">Model <b id="mcVer">v4.2.1</b> · <b id="mcSig">0</b> signals</span>
+      </button>
+      <button class="btn btn-ghost btn-sm" id="themeBtn" aria-label="Toggle house lights">House lights</button>
+      <button class="btn btn-ghost" id="watchBtn">
+        Watchlist <span class="count" id="watchCount" data-empty="1">0</span>
+      </button>
+    </div>
+  </header>
+
+  <main class="shell">
+
+    <!-- ============ NOW ON ============ -->
+    <section class="hero" aria-labelledby="heroTitle">
+      <div class="marquee-frame">
+        <div class="bulbs" id="bulbs" aria-hidden="true"></div>
+        <div class="hero-grid">
+          <div class="hero-copy">
+            <div class="hero-head">
+              <p class="eyebrow">Now on</p>
+              <span class="chan-badge" id="heroChan">01 · MARQUEE ONE</span>
+            </div>
+            <h1 class="hero-title" id="heroTitle">—</h1>
+            <div class="hero-facts" id="heroFacts"></div>
+
+            <div class="progress">
+              <div class="progress-bar" role="progressbar" aria-label="Elapsed" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="heroBarWrap">
+                <div class="progress-fill" id="heroFill" style="width:0%"></div>
+              </div>
+              <div class="progress-legend">
+                <span id="heroStart">—</span><span id="heroLeft">—</span><span id="heroEnd">—</span>
+              </div>
+            </div>
+
+            <div class="hero-model">
+              <div class="match">
+                <span class="match-n" id="heroMatchN">—<small>%</small></span>
+                <span class="meter" aria-hidden="true"><i id="heroMeter" style="--w:0%"></i></span>
+                <span class="match-pm" id="heroMatchPm">±0</span>
+              </div>
+              <p class="why" id="heroWhy">—</p>
+            </div>
+
+            <p class="hero-desc" id="heroDesc">—</p>
+
+            <div class="hero-actions">
+              <button class="btn btn-primary" id="tuneBtn">Watch live</button>
+              <button class="btn" id="heroSave">Add to watchlist</button>
+              <button class="btn btn-ghost" id="heroMore">Why this score</button>
+            </div>
+          </div>
+
+          <div class="poster" id="heroPoster">
+            <p class="poster-kicker" id="heroPosterKicker">Marquee One</p>
+            <h2 class="poster-title" id="heroPosterTitle">—</h2>
+            <div class="poster-foot"><span id="heroPosterA">—</span><span id="heroPosterB">—</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ RECOMMENDATIONS ============ -->
+    <section class="section" aria-labelledby="recoTitle">
+      <div class="section-head">
+        <div>
+          <p class="prov prov-model"><i></i>Ranked by the model</p>
+          <h2 class="section-title" id="recoTitle">Predicted for you</h2>
+          <p class="section-sub" id="recoSub">—</p>
+        </div>
+        <button class="btn btn-sm" id="retrain">Reset the model</button>
+      </div>
+
+      <div class="reco-layout">
+        <div class="reco-list" id="recoList"></div>
+
+        <aside class="model-panel" id="modelPanel">
+          <div class="mp-head">
+            <h3>Your taste model</h3>
+            <span class="mono" style="font-size:10.5px;color:var(--signal)" id="mpConf">—</span>
+          </div>
+          <div class="mp-body">
+            <p class="mp-label"><span>Genre affinity</span><span class="mono">weight</span></p>
+            <div class="aff" id="affBars"></div>
+
+            <p class="mp-label"><span>When you watch</span><span class="mono">17:00–02:00</span></p>
+            <div class="spark" id="spark"></div>
+            <div class="spark-axis"><span>17</span><span>20</span><span>23</span><span>02</span></div>
+
+            <dl class="mp-stats">
+              <div class="mp-stat"><dt>Signals logged</dt><dd id="mpSignals">0</dd></div>
+              <div class="mp-stat"><dt>Preferred runtime</dt><dd id="mpRuntime">—</dd></div>
+              <div class="mp-stat"><dt>Top channel</dt><dd id="mpChannel">—</dd></div>
+              <div class="mp-stat"><dt>Last updated</dt><dd id="mpUpdated">—</dd></div>
+            </dl>
+          </div>
+          <div class="mp-foot">
+            <details class="disclose">
+              <summary>What feeds this</summary>
+              <p>Four signals, weighted: genre affinity (42%), channel history (22%), how close a runtime is to your average (14%), and where a start time falls in your usual viewing window (22%).</p>
+              <p>Every <b>More</b> or <b>Less</b> you press writes back to the model immediately — scores, ranking and the predicted path all recompute in front of you. Nothing leaves this page.</p>
+            </details>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <!-- ============ GUIDE ============ -->
+    <section class="section" aria-labelledby="guideTitle">
+      <div class="section-head">
+        <div>
+          <p class="prov prov-human"><i></i>The published schedule</p>
+          <h2 class="section-title" id="guideTitle">Tonight's lineup</h2>
+          <p class="section-sub" id="guideCount">—</p>
+        </div>
+        <button class="btn" id="jumpNow">Jump to now</button>
+      </div>
+
+      <div class="guide-bar">
+        <div class="chips" id="chips" role="group" aria-label="Filter listings"></div>
+      </div>
+
+      <div class="epg" id="epg" data-scores="on" tabindex="0" aria-label="Programme guide, scroll horizontally">
+        <div class="epg-inner" id="epgInner"></div>
+      </div>
+    </section>
+
+    <!-- ============ EDITORS' PICKS ============ -->
+    <section class="section" aria-labelledby="picksTitle">
+      <div class="section-head">
+        <div>
+          <p class="prov prov-human"><i></i>Chosen by our programmers</p>
+          <h2 class="section-title" id="picksTitle">Editors' picks</h2>
+          <p class="section-sub">Six things worth staying up for — unranked, unpersonalised</p>
+        </div>
+      </div>
+      <div class="rail" id="rail"></div>
+    </section>
+
+    <footer class="foot">
+      <span>Marquee — a listings interface for film, live music, comedy and stage.</span>
+      <span class="mono" id="footStamp">—</span>
+    </footer>
+  </main>
+</div>
+
+<div class="scrim" id="scrim"></div>
+
+<aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-labelledby="dTitle" aria-hidden="true">
+  <div class="drawer-head">
+    <span class="eyebrow" id="dChannel">—</span>
+    <button class="btn btn-ghost btn-sm" id="dClose" aria-label="Close details">Close</button>
+  </div>
+  <div class="drawer-body">
+    <span class="tag" id="dTag">—</span>
+    <h2 class="d-title" id="dTitle">—</h2>
+    <p class="d-desc" id="dDesc">—</p>
+
+    <div class="explain">
+      <div class="explain-head">
+        <p>Why this scored</p>
+        <div class="match">
+          <span class="match-n" id="dMatchN">—<small>%</small></span>
+          <span class="meter" aria-hidden="true"><i id="dMeter" style="--w:0%"></i></span>
+          <span class="match-pm" id="dMatchPm">±0</span>
+        </div>
+      </div>
+      <div class="contribs" id="dContribs"></div>
+      <p class="explain-note" id="dNote">—</p>
+      <div class="d-actions" style="margin-top:13px">
+        <button class="btn btn-sm fb" id="dMore">▲ More like this</button>
+        <button class="btn btn-sm fb down" id="dLess">▼ Less like this</button>
+      </div>
+    </div>
+
+    <dl class="d-facts">
+      <div class="d-row"><dt>Starts</dt><dd id="dStart">—</dd></div>
+      <div class="d-row"><dt>Ends</dt><dd id="dEnd">—</dd></div>
+      <div class="d-row"><dt>Runtime</dt><dd id="dRun">—</dd></div>
+      <div class="d-row"><dt>Channel</dt><dd id="dChan">—</dd></div>
+      <div class="d-row"><dt>Rating</dt><dd id="dRate">—</dd></div>
+      <div class="d-row"><dt>Predicted rating</dt><dd id="dPred">—</dd></div>
+    </dl>
+
+    <div class="d-actions">
+      <button class="btn btn-primary" id="dSave">Add to watchlist</button>
+      <button class="btn" id="dRemind">Remind me</button>
+    </div>
+  </div>
+</aside>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script src="assets/app.js"></script>
+</body>
+</html>
