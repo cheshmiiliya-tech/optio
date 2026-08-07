@@ -195,11 +195,13 @@
     /* map 0..1 onto a believable 31..98 band */
     const match = Math.round(31 + total * 67);
 
-    /* certainty rises with signal volume and with how decided the
-       genre weight is; shown to the user as an honest +/- margin */
-    const decided = Math.abs(g - .5) * 2;
+    /* Certainty rises with signal volume and with how *decided* the
+       weights are — an affinity near 0.5 means the model has no
+       opinion, which is a wider margin than a confident dislike.
+       Shown to the user as an honest +/- band. */
+    const decided = Math.abs(g - .5) * 2 * .6 + Math.abs(c - .5) * 2 * .4;
     const vol = Math.min(1, (model.signals - 900) / 1400);
-    const pm = Math.max(2, Math.round(13 - decided * 5 - vol * 5));
+    const pm = Math.max(2, Math.round(9 - decided * 5 - vol * 2));
 
     parts.forEach(function(pt){ pt.share = total > 0 ? pt.val / total : 0; });
     parts.sort(function(a,b){ return b.share - a.share; });
@@ -231,6 +233,212 @@
     toast((dir > 0 ? "Learned: more like " : "Learned: less like ") + p.title
       + " — " + GENRES[p.genre].label + " weight now " + Math.round(model.genre[p.genre] * 100) + "%");
     recompute();
+  }
+
+  /* ============================================================
+     2b. DECISION SYSTEM
+     The recommender ranks. This layer commits to an action under a
+     stated policy, and — the part that makes it a decision system
+     rather than a longer list — it is allowed to refuse to decide
+     and hand the call back to the person.
+
+       candidate
+         -> GATES    hard constraints, pass/fail, no scoring
+         -> SCORE    the model, unchanged
+         -> RULES    signed adjustments applied in priority order
+         -> ABSTAIN  margin too wide to act on? then ASK
+         -> LADDER   thresholds map the final score to one action
+
+     Every step is recorded, so the trace shown in the UI is the
+     real execution log, not a summary written afterwards.
+     ============================================================ */
+
+  const policy = {
+    autoplayAt: 85,
+    promoteAt:  74,
+    offerAt:    58,
+    caution:    0.35,        // multiplier on the +/- band when testing for abstention
+    parentalLock: true,
+    bedtimeHour: 0.5,       // 00:30
+    enabled: {}             // rule id -> bool, filled below
+  };
+
+  /* seeded context the rules read from */
+  const recentlyWatched = new Set(["Panel Beaters", "The Round-Up", "Orbital Drift"]);
+  const genresSeenLately = new Set(["film", "series"]);
+  const sessionGenres = [];   // grows as the user tunes in or saves
+
+  function bedtimeMs(ref){
+    const d = new Date(ref);
+    const h = Math.floor(policy.bedtimeHour), m = Math.round((policy.bedtimeHour % 1) * 60);
+    const b = new Date(d); b.setHours(h, m, 0, 0);
+    if(b.getTime() < ref - 6 * 3600000) b.setDate(b.getDate() + 1);
+    if(b.getTime() < ref) b.setDate(b.getDate() + 1);
+    return b.getTime();
+  }
+
+  function clashesWithSaved(p){
+    let hit = null;
+    saved.forEach(function(id){
+      const q = byIdMap[id];
+      if(q && q.id !== p.id && q.start < p.end && p.start < q.end) hit = q;
+    });
+    return hit;
+  }
+
+  /* Each rule states its own sentence, so the trace never needs a
+     lookup table of human copy kept in sync somewhere else. */
+  const RULES = [
+    {id:"G1", kind:"gate", name:"Age gate",
+     test:function(p){ return policy.parentalLock && p.rating === "18"; },
+     verdict:"BLOCK",
+     says:function(){ return "Rated 18 and the parental lock is on"; },
+     idle:function(){ return "Not rated 18, or the lock is off"; }},
+
+    {id:"G2", kind:"gate", name:"Too far in",
+     test:function(p){ return Date.now() > p.start + p.dur * 60000 * 0.35; },
+     verdict:"BLOCK",
+     says:function(p){ return "Already " + Math.round((Date.now() - p.start) / (p.dur * 600)) + "% through"; },
+     idle:function(){ return "Starts soon, or barely started"; }},
+
+    {id:"R1", kind:"soft", name:"Repeat suppression", delta:-22,
+     test:function(p){ return recentlyWatched.has(p.title); },
+     says:function(){ return "You watched this in the last 7 days"; },
+     idle:function(){ return "Not in the last 7 days of history"; }},
+
+    {id:"R2", kind:"soft", name:"Diversity guard", delta:-11,
+     test:function(p){
+       return sessionGenres.slice(-3).filter(function(g){ return g === p.genre; }).length >= 2;
+     },
+     says:function(p){ return "Third " + GENRES[p.genre].label.toLowerCase() + " in a row tonight"; },
+     idle:function(){ return "No genre streak to break"; }},
+
+    {id:"R3", kind:"soft", name:"Bedtime guard", delta:-14,
+     test:function(p){ return p.end > bedtimeMs(Date.now()); },
+     says:function(p){ return "Finishes " + hhmm(p.end) + ", past your cut-off"; },
+     idle:function(){ return "Finishes before your cut-off"; }},
+
+    {id:"R4", kind:"soft", name:"Novelty bonus", delta:9,
+     test:function(p){ return !genresSeenLately.has(p.genre); },
+     says:function(p){ return "A " + GENRES[p.genre].label.toLowerCase() + " — not tried lately"; },
+     idle:function(){ return "A genre you already watch"; }},
+
+    {id:"R5", kind:"soft", name:"Watchlist clash", delta:-16,
+     test:function(p){ return !!clashesWithSaved(p); },
+     says:function(p){ return "Overlaps " + clashesWithSaved(p).title + " on your watchlist"; },
+     idle:function(){ return "No clash with anything saved"; }},
+
+    {id:"R6", kind:"floor", name:"Editorial floor", floor:"OFFER",
+     test:function(p, ctx){ return ctx.isEditorsPick && ctx.running >= 50; },
+     says:function(){ return "An editors' pick — never falls below Offer"; },
+     idle:function(){ return "Not an editors' pick, or scored too low to protect"; }},
+
+    /* Abstention. Not "the margin is large" — a wide margin is
+       harmless if the whole band still points at one action. The
+       system refuses only when the margin straddles a boundary, so
+       the uncertainty genuinely changes what it would do. */
+    {id:"C1", kind:"gate", name:"Boundary straddle",
+     test:function(p, ctx){ return straddle(ctx).lo !== straddle(ctx).hi; },
+     verdict:"ASK",
+     says:function(p, ctx){
+       const s = straddle(ctx);
+       return "±" + Math.round(ctx.pm * policy.caution) + " spans the "
+            + s.lo + "/" + s.hi + " boundary — the margin covers two different actions";
+     },
+     idle:function(p, ctx){
+       return "±" + Math.round(ctx.pm * policy.caution) + " stays inside "
+            + straddle(ctx).lo + ", so the margin does not change the call";
+     }}
+  ];
+  RULES.forEach(function(r){ policy.enabled[r.id] = true; });
+
+  const VERDICTS = {
+    AUTOPLAY:{cls:"v-autoplay", tone:"var(--v-go)",   says:"Confident enough to start on its own."},
+    PROMOTE: {cls:"v-promote",  tone:"var(--signal)", says:"Pushed to the top of your recommendations."},
+    OFFER:   {cls:"v-offer",    tone:"var(--text-2)", says:"Listed in the guide, but not pushed at you."},
+    ASK:     {cls:"v-ask",      tone:"var(--accent)", says:"The model will not call this one. Over to you."},
+    DEMOTE:  {cls:"v-demote",   tone:"var(--text-3)", says:"Kept visible, but pushed down the order."},
+    BLOCK:   {cls:"v-block",    tone:"var(--live)",   says:"A hard constraint stopped this before scoring mattered."}
+  };
+
+  let editorsPickTitles = new Set();
+
+  function ladderVerdict(s){
+    if(s >= policy.autoplayAt) return "AUTOPLAY";
+    if(s >= policy.promoteAt)  return "PROMOTE";
+    if(s >= policy.offerAt)    return "OFFER";
+    return "DEMOTE";
+  }
+
+  /* which action each end of the confidence band would land on */
+  function straddle(ctx){
+    const w = ctx.pm * policy.caution;
+    return {
+      lo: ladderVerdict(Math.max(0, ctx.running - w)),
+      hi: ladderVerdict(Math.min(100, ctx.running + w))
+    };
+  }
+
+  /* the engine. returns the verdict AND the execution log that produced it */
+  function decide(p){
+    const sc = score(p);
+    const trace = [];
+    const ctx = {pm:sc.pm, running:sc.match, isEditorsPick:editorsPickTitles.has(p.title)};
+    let step = 0, verdict = null, floor = null;
+
+    /* 1. hard gates, before anything is scored */
+    RULES.filter(function(r){ return r.kind === "gate" && r.id[0] === "G"; }).forEach(function(r){
+      const on = policy.enabled[r.id];
+      const fired = on && r.test(p, ctx);
+      trace.push({n:++step, kind:"gate", id:r.id, name:r.name, fired:fired, off:!on,
+                  says:fired ? r.says(p, ctx) : r.idle(p, ctx), delta:null,
+                  run:verdict ? null : ctx.running});
+      if(fired && !verdict) verdict = r.verdict;
+    });
+
+    /* 2. the model */
+    trace.push({n:++step, kind:"score", id:"M", name:"Model v4.2.1", fired:true,
+                says:"Weighted taste vector over four signals, ±" + sc.pm,
+                delta:null, run:ctx.running});
+
+    /* 3. soft rules in priority order */
+    RULES.filter(function(r){ return r.kind === "soft"; }).forEach(function(r){
+      const on = policy.enabled[r.id];
+      const fired = on && r.test(p, ctx);
+      if(fired) ctx.running = Math.max(0, Math.min(100, ctx.running + r.delta));
+      trace.push({n:++step, kind:"soft", id:r.id, name:r.name, fired:fired, off:!on,
+                  says:fired ? r.says(p, ctx) : r.idle(p, ctx),
+                  delta:fired ? r.delta : 0, run:ctx.running});
+    });
+
+    /* 4. floors */
+    RULES.filter(function(r){ return r.kind === "floor"; }).forEach(function(r){
+      const on = policy.enabled[r.id];
+      const fired = on && r.test(p, ctx);
+      if(fired) floor = r.floor;
+      trace.push({n:++step, kind:"floor", id:r.id, name:r.name, fired:fired, off:!on,
+                  says:fired ? r.says(p, ctx) : r.idle(p, ctx), delta:0, run:ctx.running});
+    });
+
+    /* 5. abstention — checked last so the log still shows the score it declined to act on */
+    RULES.filter(function(r){ return r.id === "C1"; }).forEach(function(r){
+      const on = policy.enabled[r.id];
+      const fired = on && r.test(p, ctx);
+      trace.push({n:++step, kind:"gate", id:r.id, name:r.name, fired:fired, off:!on,
+                  says:fired ? r.says(p, ctx) : r.idle(p, ctx), delta:null, run:ctx.running});
+      if(fired && !verdict) verdict = r.verdict;
+    });
+
+    /* 6. the ladder */
+    if(!verdict){
+      verdict = ladderVerdict(ctx.running);
+      if(floor === "OFFER" && (verdict === "DEMOTE")) verdict = "OFFER";
+    }
+
+    trace.push({n:null, kind:"verdict", id:"", name:verdict, fired:true, final:true,
+                says:VERDICTS[verdict].says, delta:null, run:ctx.running});
+
+    return {verdict:verdict, trace:trace, raw:sc.match, final:ctx.running, sc:sc, floor:floor};
   }
 
   /* ============================================================
@@ -304,7 +512,9 @@
   (function(){
     const host = $("chips");
     let html = '<button class="chip" data-g="all" aria-pressed="true">All listings</button>'
-             + '<button class="chip chip-ai" data-g="__ai" aria-pressed="false"><span class="swatch"></span>Model picks · 70%+</button>';
+             + '<button class="chip chip-ai" data-g="__ai" aria-pressed="false"><span class="swatch"></span>Model picks · 70%+</button>'
+             + '<button class="chip chip-ai" data-g="__act" aria-pressed="false"><span class="swatch"></span>Acted on</button>'
+             + '<button class="chip chip-ai" data-g="__ask" aria-pressed="false"><span class="swatch"></span>Needs your call</button>';
     Object.keys(GENRES).forEach(function(k){
       html += '<button class="chip" data-g="' + k + '" aria-pressed="false">'
             + '<span class="swatch" style="--sw:' + gcolor(k) + '"></span>' + GENRES[k].label + '</button>';
@@ -354,7 +564,8 @@
         html += '<button class="prog" data-id="' + p.id + '" style="left:' + l + 'px;width:' + (w-4) + 'px;--gc:' + gcolor(p.genre) + '">'
           + '<span class="prog-t">' + esc(p.title) + '</span>'
           + '<span class="prog-m">' + hhmm(p.start) + '–' + hhmm(p.end)
-          + '<b class="prog-score" data-score="' + p.id + '"></b></span></button>';
+          + '<b class="prog-score" data-score="' + p.id + '"></b></span>'
+          + '<span class="prog-v"></span></button>';
       });
       html += '</div></div>';
     });
@@ -391,8 +602,11 @@
     document.querySelectorAll(".prog").forEach(function(el){
       const p = byIdMap[el.dataset.id];
       const sc = score(p);
+      const d = decide(p);
       const match = filter === "all" ? true
                   : filter === "__ai" ? sc.match >= 70
+                  : filter === "__act" ? (d.verdict === "AUTOPLAY" || d.verdict === "PROMOTE")
+                  : filter === "__ask" ? d.verdict === "ASK"
                   : p.genre === filter;
       el.classList.toggle("dim", !match);
       el.classList.toggle("past", p.end <= t);
@@ -401,6 +615,11 @@
       el.classList.toggle("saved", saved.has(p.id));
       const sEl = el.querySelector(".prog-score");
       if(sEl) sEl.textContent = sc.match + "%";
+      const vEl = el.querySelector(".prog-v");
+      if(vEl){
+        vEl.style.setProperty("--vc", VERDICTS[d.verdict].tone);
+        vEl.title = d.verdict;
+      }
       if(match) shown++;
     });
     $("guideCount").textContent = shown + " of " + listings.length + " listings · "
@@ -431,7 +650,8 @@
       return '<article class="reco" data-id="' + p.id + '">'
         + '<div class="reco-rank">' + pad(i+1) + '</div>'
         + '<div class="reco-main">'
-          + '<div class="reco-t"><button data-open="' + p.id + '"><h3>' + esc(p.title) + '</h3></button></div>'
+          + '<div class="reco-t"><button data-open="' + p.id + '"><h3>' + esc(p.title) + '</h3></button>'
+          + verdictChip(decide(p).verdict) + '</div>'
           + '<div class="reco-meta">'
             + '<i class="gdot" style="--gc:' + gcolor(p.genre) + '"></i>' + GENRES[p.genre].label
             + ' · ' + esc(p.ch.name) + ' · ' + hhmm(p.start) + ' · ' + runtime(p.dur)
@@ -497,6 +717,249 @@
     $("mpUpdated").textContent = hhmm(lastUpdate);
     $("mcSig").textContent = model.signals.toLocaleString("en-US");
   }
+
+  /* ============================================================
+     7b. DECISION SYSTEM — views
+     ============================================================ */
+  let candidateId = null;
+
+  /* forward-looking: a decision queue is about calls still to be made,
+     so anything already well underway belongs in the guide, not here */
+  function decisionQueue(){
+    const t = Date.now();
+    const seen = Object.create(null);
+    return listings
+      .filter(function(p){ return p.start > t - 5 * 60000; })
+      .sort(function(a,b){ return a.start - b.start; })
+      .filter(function(p){ if(seen[p.title]) return false; seen[p.title] = 1; return true; })
+      .slice(0, 9);
+  }
+
+  function verdictChip(v){
+    return '<span class="verdict ' + VERDICTS[v].cls + '">' + v + '</span>';
+  }
+
+  /* ---- radial signal graph ---- */
+  const GRAPH_ANGLES = [-90, -30, 30, 90, 150, 210];
+
+  function renderGraph(){
+    const p = byIdMap[candidateId];
+    if(!p) return;
+    const d = decide(p);
+    const sc = d.sc;
+    const by = {};
+    sc.parts.forEach(function(pt){ by[pt.k] = pt; });
+
+    const slotLabel = slotOf(p.start) > .55 ? "Late slot" : "Early slot";
+    const nodes = [
+      {k:"channel", label:p.ch.name,        val:Math.round(by.channel.raw*100)+"%", color:"var(--signal)",   share:by.channel.share},
+      {k:"genre",   label:GENRES[p.genre].label, val:Math.round(by.genre.raw*100)+"%", color:gcolor(p.genre), share:by.genre.share},
+      {k:"runtime", label:runtime(p.dur),   val:Math.round(by.runtime.raw*100)+"%", color:"var(--signal)",   share:by.runtime.share},
+      {k:"verdict", label:"Verdict",        val:d.verdict,                           color:VERDICTS[d.verdict].tone, share:1, wide:true},
+      {k:"slot",    label:slotLabel,        val:Math.round(by.slot.raw*100)+"%",     color:"var(--signal)",   share:by.slot.share},
+      {k:"conf",    label:"Confidence",     val:"±"+sc.pm,                           color:"var(--signal)",   share:.5}
+    ];
+
+    let edges = "", divs = "";
+    nodes.forEach(function(n, i){
+      const a = GRAPH_ANGLES[i] * Math.PI / 180;
+      const x = 50 + 33 * Math.cos(a);
+      const y = 50 + 33 * Math.sin(a);
+      const w = n.k === "verdict" ? 2.6 : (0.5 + n.share * 5);
+      const op = n.k === "verdict" ? .85 : (0.22 + n.share * 1.5);
+      edges += '<line x1="50" y1="50" x2="' + x.toFixed(2) + '" y2="' + y.toFixed(2) + '"'
+             + ' stroke="' + n.color + '" stroke-width="' + w.toFixed(2) + '"'
+             + ' stroke-opacity="' + Math.min(1, op).toFixed(2) + '"'
+             + ' vector-effect="non-scaling-stroke"'
+             + (n.k === "verdict" ? ' stroke-dasharray="4 3"' : '') + ' />';
+      divs += '<div class="gnode' + (n.share < .16 && n.k !== "verdict" && n.k !== "conf" ? " faint" : "") + '"'
+            + ' style="left:' + x.toFixed(2) + '%;top:' + y.toFixed(2) + '%;--nc:' + n.color + '">'
+            + '<span class="gnode-l">' + esc(n.label) + '</span>'
+            + '<span class="gnode-v" style="' + (n.wide ? "font-size:13px;letter-spacing:.06em" : "") + '">' + esc(n.val) + '</span></div>';
+    });
+
+    $("graphEdges").innerHTML = edges;
+    $("graphNodes").innerHTML = divs
+      + '<div class="gnode gnode-core" style="left:50%;top:50%">'
+      + '<span class="gnode-l">User</span><span class="gnode-v">' + sc.match + '%</span></div>';
+
+    $("graphNote").textContent = "deciding · " + p.title.slice(0, 26);
+  }
+
+  /* ---- verdict panel + threshold ladder ---- */
+  function renderVerdict(){
+    const p = byIdMap[candidateId];
+    if(!p) return;
+    const d = decide(p);
+    const V = VERDICTS[d.verdict];
+
+    $("vCand").textContent = p.title + " · " + p.ch.name + " · " + hhmm(p.start);
+    const big = $("vBig");
+    big.textContent = d.verdict;
+    big.style.setProperty("--vc", V.tone);
+    $("vSays").textContent = V.says;
+    $("vTime").textContent = hhmm(Date.now());
+
+    const bands = [
+      {k:"auto",    from:policy.autoplayAt, to:100,                label:"Autoplay"},
+      {k:"promote", from:policy.promoteAt,  to:policy.autoplayAt,  label:"Promote"},
+      {k:"offer",   from:policy.offerAt,    to:policy.promoteAt,   label:"Offer"},
+      {k:"low",     from:0,                 to:policy.offerAt,     label:"Demote"}
+    ];
+    $("ladderScale").innerHTML = bands.map(function(b){
+      return '<div class="band band-' + b.k + '" style="flex:' + Math.max(1, b.to - b.from) + ' 0 0"></div>';
+    }).join("");
+    $("ladderBands").innerHTML = bands.map(function(b){
+      return '<span style="flex:' + Math.max(1, b.to - b.from) + ' 0 0;display:flex;align-items:center;justify-content:flex-end">' + b.label + '</span>';
+    }).join("");
+
+    const marks = $("ladderMarks");
+    let html = '<div class="mark mark-raw" style="top:' + (100 - d.raw) + '%"><span>' + d.raw + ' model</span></div>';
+    if(d.final !== d.raw){
+      const sign = d.final > d.raw ? "+" : "";
+      html += '<div class="mark mark-final" style="top:' + (100 - d.final) + '%;--vc:' + V.tone + '">'
+            + '<span>' + d.final + ' after policy ' + sign + (d.final - d.raw) + '</span></div>';
+    } else {
+      html += '<div class="mark mark-final" style="top:' + (100 - d.final) + '%;--vc:' + V.tone + '">'
+            + '<span>' + d.final + ' final</span></div>';
+    }
+    marks.innerHTML = html;
+  }
+
+  /* ---- the execution log ---- */
+  function renderTrace(){
+    const p = byIdMap[candidateId];
+    if(!p) return;
+    const d = decide(p);
+
+    $("traceBody").innerHTML = d.trace.map(function(r){
+      if(r.final){
+        return '<tr class="final"><td class="step"></td>'
+          + '<td class="kind k-verdict">Verdict</td>'
+          + '<td class="rule">' + verdictChip(r.name) + '<small>' + esc(r.says) + '</small></td>'
+          + '<td class="r delta d-nil">·</td>'
+          + '<td class="r run">' + r.run + '</td></tr>';
+      }
+      const cls = r.off ? "skipped" : (r.fired ? "fired" : "skipped");
+      let delta = '<span class="d-nil">·</span>';
+      if(r.delta) delta = '<span class="' + (r.delta > 0 ? "d-pos" : "d-neg") + '">' + (r.delta > 0 ? "+" : "") + r.delta + '</span>';
+      return '<tr class="' + cls + '">'
+        + '<td class="step">' + pad(r.n) + '</td>'
+        + '<td class="kind k-' + r.kind + '">' + r.kind + '</td>'
+        + '<td class="rule">' + esc(r.id ? r.id + " · " + r.name : r.name)
+          + (r.off ? ' <span class="mono" style="font-size:9.5px;color:var(--text-3)">(disabled)</span>' : '')
+          + '<small>' + esc(r.says) + '</small></td>'
+        + '<td class="r delta">' + delta + '</td>'
+        + '<td class="r run">' + (r.run === null ? "—" : r.run) + '</td></tr>';
+    }).join("");
+
+    const fired = d.trace.filter(function(r){ return r.fired && !r.final && r.kind !== "score"; }).length;
+    $("traceNote").textContent = fired + " of " + RULES.length + " rules fired · " + d.raw + " → " + d.final;
+  }
+
+  /* ---- queue ---- */
+  function renderQueue(){
+    const q = decisionQueue();
+    if(!candidateId || !q.some(function(p){ return p.id === candidateId; })) {
+      candidateId = q.length ? q[0].id : null;
+    }
+    $("queue").innerHTML = q.map(function(p){
+      const d = decide(p);
+      return '<button class="q-item" data-id="' + p.id + '" aria-current="' + (p.id === candidateId) + '">'
+        + '<span class="q-t">' + esc(p.title) + '</span>'
+        + '<span class="q-b"><span class="q-m">' + hhmm(p.start) + ' · ' + esc(p.ch.name) + '</span>'
+        + verdictChip(d.verdict) + '</span></button>';
+    }).join("");
+    $("qCount").textContent = q.length + " pending";
+
+    const tally = Object.create(null);
+    listings.forEach(function(p){
+      if(p.end <= Date.now()) return;
+      const v = decide(p).verdict;
+      tally[v] = (tally[v] || 0) + 1;
+    });
+    $("dsysSub").textContent = Object.keys(VERDICTS)
+      .filter(function(v){ return tally[v]; })
+      .map(function(v){ return tally[v] + " " + v.toLowerCase(); }).join(" · ");
+    $("verdictLegend").innerHTML = Object.keys(VERDICTS)
+      .map(function(v){ return verdictChip(v); }).join("");
+  }
+
+  /* ---- policy controls ---- */
+  const THRESHOLDS = [
+    {k:"autoplayAt", label:"Autoplay above", min:60, max:99, scale:1,
+     note:"Start without asking at or above this score."},
+    {k:"promoteAt",  label:"Promote above",  min:40, max:95, scale:1,
+     note:"Push to the top of your recommendations."},
+    {k:"offerAt",    label:"Offer above",    min:20, max:80, scale:1,
+     note:"Below this, a title is demoted rather than listed."},
+    {k:"caution",    label:"Caution",        min:0,  max:20, scale:10, unit:"×",
+     note:"How much of the confidence band to test. At 0 the system always commits; higher values make it abstain whenever the margin could point at two different actions."}
+  ];
+
+  function renderPolicy(){
+    $("thresholds").innerHTML = THRESHOLDS.map(function(t){
+      const shown = t.scale === 1 ? policy[t.k] : policy[t.k].toFixed(1);
+      return '<div class="thr">'
+        + '<label for="thr-' + t.k + '">' + t.label + '</label>'
+        + '<output>' + shown + (t.unit || "") + '</output>'
+        + '<input type="range" id="thr-' + t.k + '" data-thr="' + t.k + '" data-scale="' + t.scale + '"'
+        + ' min="' + t.min + '" max="' + t.max + '" value="' + Math.round(policy[t.k] * t.scale) + '">'
+        + '<small>' + t.note + '</small></div>';
+    }).join("");
+
+    const fireCount = Object.create(null);
+    const live = listings.filter(function(p){ return p.end > Date.now(); });
+    live.forEach(function(p){
+      decide(p).trace.forEach(function(r){ if(r.fired && r.id) fireCount[r.id] = (fireCount[r.id] || 0) + 1; });
+    });
+
+    $("ruleToggles").innerHTML = RULES.map(function(r){
+      return '<label class="rule-toggle">'
+        + '<input type="checkbox" data-rule="' + r.id + '"' + (policy.enabled[r.id] ? " checked" : "") + '>'
+        + '<span class="rname"><span class="rid">' + r.id + '</span> ' + r.name + '</span>'
+        + '<span class="rfired">' + (fireCount[r.id] || 0) + '×</span></label>';
+    }).join("");
+
+    $("policyDelta").textContent = "parental lock " + (policy.parentalLock ? "on" : "off")
+      + " · cut-off " + pad(Math.floor(policy.bedtimeHour)) + ":" + pad(Math.round((policy.bedtimeHour % 1) * 60));
+  }
+
+  function renderDecision(){
+    renderQueue();
+    renderGraph();
+    renderVerdict();
+    renderTrace();
+    renderPolicy();
+  }
+
+  $("queue").addEventListener("click", function(e){
+    const b = e.target.closest(".q-item");
+    if(!b) return;
+    candidateId = b.dataset.id;
+    renderDecision();
+  });
+
+  $("thresholds").addEventListener("input", function(e){
+    const el = e.target.closest("[data-thr]");
+    if(!el) return;
+    policy[el.dataset.thr] = Number(el.value) / Number(el.dataset.scale || 1);
+    /* keep the ladder monotonic so the bands can never invert */
+    policy.autoplayAt = Math.max(policy.autoplayAt, policy.promoteAt + 3);
+    policy.promoteAt  = Math.max(policy.promoteAt,  policy.offerAt + 3);
+    renderDecision();
+    applyFilter();
+  });
+
+  $("ruleToggles").addEventListener("change", function(e){
+    const el = e.target.closest("[data-rule]");
+    if(!el) return;
+    policy.enabled[el.dataset.rule] = el.checked;
+    const r = RULES.filter(function(x){ return x.id === el.dataset.rule; })[0];
+    toast((el.checked ? "Rule enabled: " : "Rule disabled: ") + r.id + " " + r.name);
+    renderDecision();
+    applyFilter();
+  });
 
   /* ============================================================
      8. HERO
@@ -589,9 +1052,22 @@
         + '<div class="contrib-v">' + Math.round(pt.share*100) + '%</div></div>';
     }).join("");
 
-    $("dNote").textContent = "Confidence band ±" + sc.pm + " points, from "
-      + model.signals.toLocaleString("en-US") + " logged signals. The model is wrong sometimes — "
-      + "tell it so and this score changes immediately.";
+    const d = decide(p);
+    const fired = d.trace.filter(function(r){ return r.fired && !r.final && r.kind !== "score"; });
+    $("dNote").innerHTML = "Confidence band ±" + sc.pm + " points, from "
+      + model.signals.toLocaleString("en-US") + " logged signals.<br>"
+      + "Policy decided " + verdictChip(d.verdict) + " at " + d.final
+      + (d.final !== d.raw ? " (model said " + d.raw + ")" : "")
+      + (fired.length ? " · " + fired.map(function(r){ return r.id; }).join(", ") + " fired" : " · no rules fired")
+      + ". <button class=\"fb\" id=\"dInspect\" style=\"margin-top:9px\">Inspect the trace</button>";
+
+    const insp = $("dInspect");
+    if(insp) insp.addEventListener("click", function(){
+      candidateId = p.id;
+      renderDecision();
+      closeDrawer();
+      $("dsysTitle").scrollIntoView({behavior:"smooth", block:"start"});
+    });
 
     syncSaveButtons();
   }
@@ -609,7 +1085,10 @@
   function toggleSave(id){
     const p = byIdMap[id];
     if(saved.has(id)){ saved.delete(id); toast("Removed " + p.title + " from your watchlist"); }
-    else { saved.add(id); model.signals += 1; toast("Added " + p.title + " to your watchlist — logged as a signal"); }
+    else {
+      saved.add(id); model.signals += 1; sessionGenres.push(p.genre);
+      toast("Added " + p.title + " to your watchlist — logged as a signal");
+    }
     const c = $("watchCount");
     c.textContent = saved.size;
     c.setAttribute("data-empty", saved.size === 0 ? "1" : "0");
@@ -622,14 +1101,21 @@
     if(openId) $("dSave").textContent = saved.has(openId) ? "In your watchlist" : "Add to watchlist";
   }
 
-  function renderRail(){
+  /* the human-curated shortlist. The policy engine reads this so an
+     editors' pick can never be suppressed by a soft rule alone. */
+  function editorsPicks(){
     const t = Date.now();
     const seen = Object.create(null);
-    const picks = listings
+    return listings
       .filter(function(p){ return p.end > t; })
       .sort(function(a,b){ return a.start - b.start; })
       .filter(function(p){ if(seen[p.title]) return false; seen[p.title] = 1; return true; })
       .slice(0, 6);
+  }
+  function railTitles(){ return editorsPicks().map(function(p){ return p.title; }); }
+
+  function renderRail(){
+    const picks = editorsPicks();
 
     $("rail").innerHTML = picks.map(function(p){
       return '<button class="card" data-id="' + p.id + '">'
@@ -677,11 +1163,13 @@
 
   /* one place that re-derives every model-dependent view */
   function recompute(){
+    editorsPickTitles = new Set(railTitles());
     applyFilter();
     renderRecos();
     renderModelPanel();
     renderPath();
     renderRail();
+    renderDecision();
     if(openId) renderDrawer();
     syncSaveButtons();
   }
@@ -701,7 +1189,12 @@
   });
   $("tuneBtn").addEventListener("click", function(){
     const p = byIdMap[heroId];
-    toast("Tuning to " + p.ch.name + " — " + p.title);
+    sessionGenres.push(p.genre);          /* feeds the diversity guard */
+    genresSeenLately.add(p.genre);
+    model.signals += 2;
+    lastUpdate = Date.now();
+    toast("Tuning to " + p.ch.name + " — " + p.title + " · logged for the diversity guard");
+    recompute();
   });
   $("heroSave").addEventListener("click", function(){ toggleSave(heroId); });
   $("heroMore").addEventListener("click", function(){ openDrawer(heroId); });
@@ -721,6 +1214,7 @@
   });
 
   /* ---------- go ---------- */
+  editorsPickTitles = new Set(railTitles());
   buildGuide();
   tick();
   jumpToNow(false);

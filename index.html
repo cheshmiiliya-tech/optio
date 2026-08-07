@@ -126,6 +126,76 @@
       </div>
     </section>
 
+    <!-- ============ DECISION SYSTEM ============ -->
+    <section class="section" aria-labelledby="dsysTitle">
+      <div class="section-head">
+        <div>
+          <p class="prov prov-model"><i></i>Policy engine · deterministic · auditable</p>
+          <h2 class="section-title" id="dsysTitle">Decision system</h2>
+          <p class="section-sub" id="dsysSub">—</p>
+        </div>
+        <div class="verdict-legend" id="verdictLegend"></div>
+      </div>
+
+      <div class="dsys-top">
+        <figure class="panel graph-panel">
+          <figcaption class="panel-head">
+            <h3>Signal graph</h3>
+            <span class="mono" id="graphNote">—</span>
+          </figcaption>
+          <div class="graph" id="graph">
+            <svg class="graph-edges" id="graphEdges" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"></svg>
+            <div class="graph-nodes" id="graphNodes"></div>
+          </div>
+          <p class="panel-note">Edge weight is each signal's share of the score for the candidate under decision. The lower node is the outcome the policy engine committed to.</p>
+        </figure>
+
+        <aside class="panel verdict-panel">
+          <div class="panel-head"><h3>Verdict</h3><span class="mono" id="vTime">—</span></div>
+          <div class="verdict-body">
+            <p class="v-cand" id="vCand">—</p>
+            <div class="verdict-big" id="vBig">—</div>
+            <p class="v-says" id="vSays">—</p>
+            <div class="ladder">
+              <div class="ladder-scale" id="ladderScale"></div>
+              <div class="ladder-marks" id="ladderMarks"></div>
+              <div class="ladder-bands" id="ladderBands"></div>
+            </div>
+          </div>
+        </aside>
+      </div>
+
+      <div class="dsys-bottom">
+        <aside class="panel queue-panel">
+          <div class="panel-head"><h3>Decision queue</h3><span class="mono" id="qCount">—</span></div>
+          <div class="queue" id="queue"></div>
+        </aside>
+
+        <div class="panel trace-panel">
+          <div class="panel-head"><h3>Decision trace</h3><span class="mono" id="traceNote">—</span></div>
+          <div class="trace-wrap">
+            <table class="trace" id="trace">
+              <thead>
+                <tr>
+                  <th class="step">#</th><th class="kind">Kind</th><th>Rule</th>
+                  <th class="r delta">Δ</th><th class="r run">Score</th>
+                </tr>
+              </thead>
+              <tbody id="traceBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="policy-panel">
+        <div class="panel-head"><h3>Policy</h3><span class="mono" id="policyDelta">—</span></div>
+        <div class="policy-body">
+          <div class="policy-thresholds" id="thresholds"></div>
+          <div class="policy-rules" id="ruleToggles"></div>
+        </div>
+      </div>
+    </section>
+
     <!-- ============ GUIDE ============ -->
     <section class="section" aria-labelledby="guideTitle">
       <div class="section-head">

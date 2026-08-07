@@ -61,6 +61,40 @@ decomposition — nothing is decorative.
   Scores, ranking, the predicted path and the model panel all recompute
   immediately.
 
+### The decision system
+A recommender ranks; a decision system **commits to an action** — and is allowed
+to refuse. Candidates run through a deterministic, auditable pipeline:
+
+```
+candidate
+  → GATES     hard constraints, pass/fail, before anything is scored
+  → SCORE     the model, unchanged
+  → RULES     signed adjustments applied in priority order
+  → ABSTAIN   would the margin change the call? then hand it back
+  → LADDER    thresholds map the final score to exactly one action
+```
+
+Six actions: `AUTOPLAY`, `PROMOTE`, `OFFER`, `ASK`, `DEMOTE`, `BLOCK`.
+
+**`ASK` is the point of the whole layer.** The system abstains not when
+uncertainty is merely *large*, but when the confidence band **straddles a
+threshold boundary** — when the margin genuinely covers two different actions.
+A wide margin that still points at one action is harmless and is acted on
+normally. In the UI, `ASK` is the one verdict rendered in the human tungsten
+rather than the machine blue: the decision has been handed back to you.
+
+- **Signal graph** — the candidate's four signals radiating from the user node,
+  edge weight proportional to each signal's share of the score, terminating in
+  the verdict the engine committed to.
+- **Decision trace** — the real execution log, step by step: which rule fired,
+  what it added or subtracted, and the running score after it. Not a summary
+  written afterwards.
+- **Threshold ladder** — where the model's raw score landed, where policy moved
+  it to, and which band it finished in.
+- **Policy controls** — four thresholds and nine rule toggles. Every change
+  re-decides all 60 upcoming listings live, and the rule list shows how many
+  times each rule fired.
+
 ---
 
 ## Design notes
