@@ -1,0 +1,16 @@
+# Core pipeline
+pandas
+numpy
+scipy
+scikit-learn
+joblib
+requests
+lightgbm
+
+# Bridge server
+fastapi
+uvicorn
+
+# Optional: natural replies instead of the scripted fallback.
+# Also run:  ollama pull llama3.2:3b
+ollama

@@ -1,144 +1,152 @@
-# Marquee
+# Movio
 
-An entertainment guide interface — film, live music, comedy, stage and sport —
-with an explainable AI recommendation and prediction layer sitting on top of the
-published schedule.
+A conversational entertainment recommender. You tell it who you are and what
+you feel like; it suggests movies, games and events from an 11,541-item
+catalogue and explains, in plain words, why it picked each one.
 
-No framework, no build step, no dependencies. Open `index.html` and it runs.
+**Live preview:** <https://cheshmiiliya-tech.github.io/marquee-entertainment-ui/>
 
 ---
 
-## Run it
+## Two ways to run it
 
-**Simplest:** double-click `index.html`.
-
-**With a local server** (recommended, matches how it will be hosted):
+### 1. Full system (the real model)
 
 ```bash
-# Python
-python -m http.server 8000
-
-# Node
-npx serve .
+cd Movio_final_code
+pip install -r requirements.txt
+python train_model.py        # builds the dataset, trains the classifier
+python server.py             # serves the API and the UI together
 ```
 
-Then open <http://localhost:8000>.
+Then open <http://127.0.0.1:8000>.
+
+`train_model.py` downloads five public datasets on first run and writes
+`data/entertainment_dataset.csv`, then trains a LightGBM classifier into
+`model/`. It takes a while — the music metadata alone is ~350 MB.
+
+### 2. Static preview (no Python)
+
+Open `index.html`, or visit the GitHub Pages link above.
+
+The page detects that no server is answering and falls back to a 420-item
+slice of the **same** catalogue, scored with the **same** formula
+reimplemented in the browser. It says so on screen. What is missing is the
+LightGBM classifier and the language model — everything else is real.
 
 ---
 
-## What's in it
-
-### The schedule
-- An 8-channel programme grid across a 9-hour window, generated **relative to the
-  real clock** — "now" always lands inside the guide, whenever you open it.
-- A live red playhead, a sticky channel column, horizontal scroll, and a
-  **Jump to now** control.
-- Genre-coded listings, a detail drawer, and a watchlist.
-
-### The model
-A small weighted recommender running entirely in the browser. Four signals:
-
-| Signal | Weight | What it measures |
-|---|---|---|
-| Genre affinity | 42% | How much you watch this genre |
-| Channel history | 22% | How often you land on this channel |
-| Runtime fit | 14% | Distance from your average sitting length |
-| Time slot | 22% | Where the start time falls in your viewing window |
-
-Every number the interface shows is this function, and every "why" is its
-decomposition — nothing is decorative.
-
-- **Predicted for you** — top 5 upcoming, ranked, each with a match score, a
-  confidence margin (`84% ±6`), a predicted rating, and the percentage
-  contribution of each signal.
-- **Your path** — a predicted lane inside the guide itself, on the same time
-  axis as the channels. A greedy walk through tonight with softmax
-  probabilities, and a confidence band that **fades as it projects further
-  ahead**.
-- **Your taste model** — a live readout of the vector: genre affinity bars, a
-  viewing-window histogram, signal count, confidence.
-- **Feedback loop** — `▲ More` / `▼ Less` write straight back to the vector.
-  Scores, ranking, the predicted path and the model panel all recompute
-  immediately.
-
-### The decision system
-A recommender ranks; a decision system **commits to an action** — and is allowed
-to refuse. Candidates run through a deterministic, auditable pipeline:
+## How the pieces fit
 
 ```
-candidate
-  → GATES     hard constraints, pass/fail, before anything is scored
-  → SCORE     the model, unchanged
-  → RULES     signed adjustments applied in priority order
-  → ABSTAIN   would the margin change the call? then hand it back
-  → LADDER    thresholds map the final score to exactly one action
+train_model.py ──► model/          LightGBM classifier + TF-IDF vectorisers
+      │                            (predicts which KIND a request is about)
+      ▼
+  feature.py   ──► data/           builds the catalogue from 5 public sources
+      │                            movies · games · events · songs · parks
+      ▼
+  chatbot.py   ──► Movio           profile, conversation, recommend()
+      │
+      ▼
+  server.py    ──► HTTP API        the only bridge to the browser
+      │
+      ▼
+ index.html + assets/              chat, profile, picks, explanation
 ```
 
-Six actions: `AUTOPLAY`, `PROMOTE`, `OFFER`, `ASK`, `DEMOTE`, `BLOCK`.
+| File | What it does |
+|---|---|
+| `Movio_final_code/feature.py` | Downloads and merges the five datasets into one catalogue |
+| `Movio_final_code/train_model.py` | Trains the LightGBM kind-classifier, saves it and the metrics |
+| `Movio_final_code/chatbot.py` | The `Movio` class: profile, conversation, scoring, feedback |
+| `Movio_final_code/server.py` | Wraps `Movio` in a FastAPI app and serves the UI |
+| `index.html` | Markup only |
+| `assets/styles.css` | Design tokens, both themes, all components |
+| `assets/app.js` | Front end; talks to the API, or falls back to static mode |
+| `assets/catalog-sample.json` | 420 real catalogue rows for the static build |
 
-**`ASK` is the point of the whole layer.** The system abstains not when
-uncertainty is merely *large*, but when the confidence band **straddles a
-threshold boundary** — when the margin genuinely covers two different actions.
-A wide margin that still points at one action is harmless and is acted on
-normally. In the UI, `ASK` is the one verdict rendered in the human tungsten
-rather than the machine blue: the decision has been handed back to you.
+### The API
 
-- **Signal graph** — the candidate's four signals radiating from the user node,
-  edge weight proportional to each signal's share of the score, terminating in
-  the verdict the engine committed to.
-- **Decision trace** — the real execution log, step by step: which rule fired,
-  what it added or subtracted, and the running score after it. Not a summary
-  written afterwards.
-- **Threshold ladder** — where the model's raw score landed, where policy moved
-  it to, and which band it finished in.
-- **Policy controls** — four thresholds and nine rule toggles. Every change
-  re-decides all 60 upcoming listings live, and the rule list shows how many
-  times each rule fired.
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/status` | Catalogue size, whether the classifier loaded, which LLM is active |
+| `POST /api/chat` | One turn of conversation, plus scored picks |
+| `GET /api/profile` | The six-field profile Movio has built so far |
+| `POST /api/feedback` | Writes a like/dislike into `data/user_feedback.csv` |
+| `GET /api/explain` | Full score breakdown for one item |
+| `GET /api/docs` | Interactive Swagger UI |
+
+---
+
+## How a recommendation is scored
+
+Straight from `chatbot.py`:
+
+```
+score = 0.78 · similarity      TF-IDF cosine between your request and the item
+      + 0.22 · quality         how well other people rated it
+      + 0.08 · audience        does it suit going alone / with friends / family
+      − 0.35 · rejected        did you turn this exact title down before
+```
+
+The percentage on screen rescales the achievable `0.05 – 0.55` range onto
+`0 – 100`; the score itself is untouched. `server.py` and `assets/app.js` use
+the same two constants so the live and static builds agree.
+
+Your six profile answers all feed in: **taste** and the current request go
+into the query text, **companion** adds its own vocabulary and the audience
+bonus, **colour** maps to a genre hint, and **city/country** pull in nearby
+events.
+
+### Why the interface says what it says
+
+Every number has a plain-language counterpart. The radial graph shows the four
+signals as a share of the score — thicker line, bigger influence. The verdict
+is one of four sentences rather than a code:
+
+| Reading | Shown as |
+|---|---|
+| 70 % and above | **Strong match** |
+| 45 – 69 % | **Worth a look** |
+| below 45 % | **Not sure — you decide** |
+| you rejected it | **You said no** |
+
+**Show details** in the header reveals the raw numbers: each signal's raw
+value, its weight, its contribution and its share.
 
 ---
 
 ## Design notes
 
-The page speaks in two deliberately different voices, so it is always clear
-whether a human or the model asserted something. Every section carries a
-provenance label.
+The page speaks in two deliberately separate voices so it is always clear who
+asserted what.
 
-|  | **Broadcast** (human) | **Model** (machine) |
+| | **You** | **The model** |
 |---|---|---|
-| Colour | warm tungsten `#FFB627` | desaturated instrument blue `#6FBBD6` |
-| Type | condensed poster caps | monospace, tabular numerals |
-| Form | solid blocks, marquee bulbs | tick meters, contribution bars, hairline scales |
+| Colour | warm tungsten | desaturated instrument blue |
+| Type | condensed caps | monospace, tabular numerals |
+| Used for | your profile, your answers, your feedback | scores, shares, the graph |
 
-Other decisions:
+When the model is unsure it hands the decision back — and switches to the
+warm tungsten to say so, because at that moment the call is yours.
 
-- **Palette** — a darkened-auditorium aubergine ground rather than neutral grey
-  or black; tungsten marquee bulbs as the accent; genre colours as a separate
-  categorical set so semantic colour never collides with the brand accent.
-- **Both themes are designed**, not inverted. The OS preference is the default;
-  the **House lights** button overrides it and the choice is remembered.
-- **Posters are generated in CSS** — layered gradients and a scanline overlay.
-  No image assets, no network requests.
-- **Accessibility** — visible focus rings, `Esc` closes the drawer, ARIA on
-  progress and dialog roles, and `prefers-reduced-motion` is respected.
-- **Honest uncertainty** — the model never states a bare number. Scores always
-  carry a `±` band, and the predicted path visibly loses confidence the further
-  into the evening it projects.
+Both themes are designed rather than inverted; the OS preference is the
+default and the header button overrides it.
 
 ---
 
-## Structure
+## Known issues
 
-```
-index.html          markup
-assets/styles.css   design tokens, both themes, all components
-assets/app.js       schedule generation, the model, rendering
-```
+- **Quality can outweigh similarity.** A TF-IDF cosine rarely exceeds `0.35`
+  while `quality` reaches `1.0`, so despite the `0.78` weight the quality term
+  often dominates. Normalising similarity before weighting would make the
+  weights mean what they say.
+- **`theme park` and `song` need a working connection.** Both loaders were
+  skipped when the catalogue in this repo was built; the other three
+  succeeded. Re-run `python train_model.py --refresh` to pick them up.
 
-All programme titles, channels and synopses are fictional.
+## Credits
 
----
-
-## Publish on GitHub Pages
-
-Push the repo, then in **Settings → Pages** set the source to `main` / `/ (root)`.
-`index.html` is at the root, so it is served as-is.
+MovieLens (GroupLens) · Free Music Archive metadata · Fáilte Ireland Open Data
+· ThemeParks.wiki · public video-game metadata. All titles belong to their
+respective sources.
