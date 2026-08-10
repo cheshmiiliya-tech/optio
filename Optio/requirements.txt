@@ -1,15 +1,17 @@
-# Core pipeline
+# Catalogue + models
 pandas
 numpy
 scipy
 scikit-learn
 joblib
 requests
-lightgbm
+lightgbm            # Optio's gradient-boosting classifier
+matplotlib          # train_deep.py draws the training curve
 
-# Bridge server
+# Server
 fastapi
 uvicorn
+pydantic
 
 # Optional: natural replies instead of the scripted fallback.
 # Also run:  ollama pull llama3.2:3b

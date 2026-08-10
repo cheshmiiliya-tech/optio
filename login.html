@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Optio — AI Entertainment Decision System. Sign in to get suggestions from two models.">
+  <meta name="color-scheme" content="light dark">
+  <title>Sign in · Optio — AI Entertainment Decision System</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>%F0%9F%8E%AC</text></svg>">
+  <link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+
+<div class="wrap auth-wrap">
+  <div class="auth-split">
+
+    <!-- left: what this is -->
+    <section class="auth-pitch">
+      <div class="brand auth-brand">Opt<em>i</em>o</div>
+      <p class="auth-kicker">AI Entertainment Decision System</p>
+      <h1 class="auth-h1">Two models.<br>One question.<br>You decide.</h1>
+      <p class="auth-lede">
+        Tell Optio what you feel like and two different recommenders answer at the
+        same time — gradient boosting and a neural network. You pick whichever read
+        you better, and that choice trains the system.
+      </p>
+      <ul class="auth-points">
+        <li><b>41,628</b> movies, games, events, songs and places</li>
+        <li><b>Two engines</b> answering side by side, every time</li>
+        <li><b>Your account</b> remembers what you liked and what you rejected</li>
+      </ul>
+    </section>
+
+    <!-- right: the form -->
+    <section class="auth-card">
+      <div class="auth-tabs" role="tablist">
+        <button class="auth-tab" id="tabLogin" role="tab" aria-selected="true">Sign in</button>
+        <button class="auth-tab" id="tabRegister" role="tab" aria-selected="false">Create account</button>
+      </div>
+
+      <form class="auth-form" id="authForm" autocomplete="on">
+        <label class="field" id="nameField" hidden>
+          <span>Display name</span>
+          <input type="text" id="displayName" autocomplete="name" placeholder="Iliya Cheshmi">
+        </label>
+
+        <label class="field">
+          <span>Username</span>
+          <input type="text" id="username" autocomplete="username" required
+                 minlength="3" placeholder="at least 3 characters">
+        </label>
+
+        <label class="field">
+          <span>Password</span>
+          <input type="password" id="password" autocomplete="current-password" required
+                 minlength="6" placeholder="at least 6 characters">
+        </label>
+
+        <p class="auth-error" id="authError" role="alert" hidden></p>
+
+        <button class="btn btn-primary auth-submit" type="submit" id="authSubmit">Sign in</button>
+
+        <p class="auth-switch" id="authSwitch">
+          New here? <button type="button" class="linkish" id="switchToRegister">Create an account</button>
+        </p>
+      </form>
+
+      <p class="auth-note" id="authNote">
+        Accounts are stored locally in <code>Optio/data/optio.db</code>.
+        Passwords are hashed with PBKDF2 — never stored as text.
+      </p>
+    </section>
+
+  </div>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script src="assets/auth.js"></script>
+</body>
+</html>

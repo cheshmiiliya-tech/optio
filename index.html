@@ -3,9 +3,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Movio — a conversational entertainment recommender with an explainable decision layer.">
+  <meta name="description" content="Optio — AI Entertainment Decision System. Two recommenders answer the same question and you choose which read you better.">
   <meta name="color-scheme" content="light dark">
-  <title>Movio — What should I do tonight?</title>
+  <title>Optio — AI Entertainment Decision System</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>%F0%9F%8E%AC</text></svg>">
   <link rel="stylesheet" href="assets/styles.css">
 </head>
@@ -15,29 +15,32 @@
 
   <header class="topbar">
     <div class="topbar-in">
-      <div class="brand">Mo<em>v</em>io</div>
+      <div class="brand">Opt<em>i</em>o</div>
+      <span class="brand-sub">AI Entertainment Decision System</span>
 
-      <button class="model-chip" id="statusChip" title="What the model is running on">
+      <button class="model-chip" id="statusChip" title="What is loaded right now">
         <span class="lamp" id="statusLamp"></span>
         <span class="mc-txt" id="statusText">connecting…</span>
       </button>
 
       <div class="topbar-spacer"></div>
 
+      <button class="btn btn-ghost btn-sm" id="aboutBtn">About</button>
       <button class="btn btn-ghost btn-sm" id="detailBtn" aria-pressed="false">Show details</button>
-      <button class="btn btn-ghost btn-sm" id="themeBtn" aria-label="Toggle theme">Lights</button>
-      <button class="btn btn-ghost btn-sm" id="resetBtn">Start over</button>
+      <button class="btn btn-ghost btn-sm" id="themeBtn" aria-label="Toggle theme">Dark</button>
+      <span class="who" id="who" hidden></span>
+      <button class="btn btn-ghost btn-sm" id="authBtn">Sign in</button>
     </div>
   </header>
 
   <main class="shell">
 
-    <!-- ============ WHAT MOVIO KNOWS ABOUT YOU ============ -->
+    <!-- ============ PROFILE ============ -->
     <section class="section section-first" aria-labelledby="profTitle">
       <div class="section-head">
         <div>
           <p class="prov prov-human"><i></i>Built from your answers</p>
-          <h2 class="section-title" id="profTitle">What I know about you</h2>
+          <h2 class="section-title" id="profTitle">What Optio knows about you</h2>
           <p class="section-sub" id="profSub">—</p>
         </div>
         <div class="prof-progress" id="profProgress" aria-hidden="true"></div>
@@ -45,12 +48,12 @@
       <div class="prof-grid" id="profGrid"></div>
     </section>
 
-    <!-- ============ CONVERSATION ============ -->
+    <!-- ============ CHAT ============ -->
     <section class="section" aria-labelledby="chatTitle">
       <div class="section-head">
         <div>
-          <p class="prov prov-human"><i></i>Talk to Movio</p>
-          <h2 class="section-title" id="chatTitle">Tell me what you're in the mood for</h2>
+          <p class="prov prov-human"><i></i>Talk to Optio</p>
+          <h2 class="section-title" id="chatTitle">What are you in the mood for?</h2>
           <p class="section-sub" id="chatSub">—</p>
         </div>
       </div>
@@ -67,17 +70,27 @@
       </div>
     </section>
 
-    <!-- ============ PICKS ============ -->
-    <section class="section" aria-labelledby="picksTitle">
+    <!-- ============ THE TWO ANSWERS ============ -->
+    <section class="section" aria-labelledby="duelTitle">
       <div class="section-head">
         <div>
-          <p class="prov prov-model"><i></i>Chosen by the model</p>
-          <h2 class="section-title" id="picksTitle">What I'd suggest</h2>
-          <p class="section-sub" id="picksSub">—</p>
+          <p class="prov prov-model"><i></i>Two models, same question</p>
+          <h2 class="section-title" id="duelTitle">Which one read you better?</h2>
+          <p class="section-sub" id="duelSub">—</p>
         </div>
-        <div class="kind-legend" id="kindLegend"></div>
+        <div class="scoreboard" id="scoreboard"></div>
       </div>
-      <div class="picks" id="picks"></div>
+
+      <div class="duel" id="duel"></div>
+
+      <div class="verdict-bar" id="verdictBar" hidden>
+        <span class="verdict-q">Which shortlist suits you better?</span>
+        <div class="verdict-actions">
+          <button class="btn" data-pick="optio"    id="pickOptio">Optio's</button>
+          <button class="btn" data-pick="deep"     id="pickDeep">Deep Learning's</button>
+          <button class="btn btn-ghost" data-pick="neither">Neither, really</button>
+        </div>
+      </div>
     </section>
 
     <!-- ============ WHY ============ -->
@@ -100,11 +113,11 @@
             <svg class="graph-edges" id="graphEdges" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"></svg>
             <div class="graph-nodes" id="graphNodes"></div>
           </div>
-          <p class="panel-note" id="graphLegend">The thicker the line, the more that reason mattered.</p>
+          <p class="panel-note">The thicker the line, the more that reason mattered.</p>
         </figure>
 
         <aside class="panel why-panel">
-          <div class="panel-head"><h3>My call</h3><span class="mono" id="whenDecided">—</span></div>
+          <div class="panel-head"><h3>The call</h3><span class="mono" id="whenDecided">—</span></div>
           <div class="why-body">
             <div class="call" id="callBadge">—</div>
             <p class="call-says" id="callSays">—</p>
@@ -114,7 +127,6 @@
         </aside>
       </div>
 
-      <!-- technical view, hidden until "Show details" -->
       <div class="tech" id="tech" hidden>
         <div class="panel">
           <div class="panel-head"><h3>How the score was built</h3><span class="mono" id="techNote">—</span></div>
@@ -133,10 +145,60 @@
     </section>
 
     <footer class="foot">
-      <span id="footLeft">Movio — conversational entertainment recommender.</span>
+      <span id="footLeft">Optio — AI Entertainment Decision System.</span>
       <span class="mono" id="footRight">—</span>
     </footer>
   </main>
+</div>
+
+<!-- ============ WELCOME POPUP ============ -->
+<div class="scrim" id="welcomeScrim" hidden></div>
+<div class="modal" id="welcome" role="dialog" aria-modal="true" aria-labelledby="welcomeTitle" hidden>
+  <button class="modal-x" id="welcomeClose" aria-label="Close">×</button>
+
+  <p class="modal-kicker">Welcome to</p>
+  <h2 class="modal-title" id="welcomeTitle">Optio</h2>
+  <p class="modal-sub">AI Entertainment Decision System</p>
+
+  <ol class="tour">
+    <li><b>Tell Optio about yourself.</b> Six short questions — your name, what you
+        like, who you're going with, where you are, and a favourite colour.</li>
+    <li><b>Ask for something.</b> "A funny film for tonight", "a co-op game",
+        "live music this weekend".</li>
+    <li><b>Two models answer at once.</b> One is gradient boosting, the other a
+        neural network. They often disagree.</li>
+    <li><b>You pick the better shortlist.</b> That choice is saved to your account
+        and shapes what you're shown next time.</li>
+  </ol>
+
+  <div class="credits">
+    <p class="credits-h">Built by</p>
+    <div class="credit-grid">
+      <div class="credit"><b>Iliya Cheshmi</b><span>UI</span></div>
+      <div class="credit"><b>Reza Shahbazi</b><span>UI</span></div>
+      <div class="credit"><b>Hosna Zandavi</b><span>AI</span></div>
+      <div class="credit"><b>Radin Jalab</b><span>AI</span></div>
+    </div>
+  </div>
+
+  <button class="btn btn-primary modal-go" id="welcomeGo">Let's go</button>
+</div>
+
+<!-- ============ SUPPORT CHAT (Chatbase) ============ -->
+<button class="support-fab" id="supportFab" aria-label="Open support chat" title="Need help?">
+  <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+    <path fill="currentColor" d="M12 3C7 3 3 6.6 3 11c0 2.3 1.1 4.3 2.9 5.7L5 21l4.4-2.2c.8.2 1.7.3 2.6.3 5 0 9-3.6 9-8s-4-8-9-8z"/>
+  </svg>
+  <span class="support-badge" id="supportBadge">1</span>
+</button>
+
+<div class="support-panel" id="supportPanel" hidden aria-live="polite">
+  <div class="support-head">
+    <span class="support-dot"></span>
+    <b>Optio Support</b>
+    <button class="support-x" id="supportClose" aria-label="Close support chat">×</button>
+  </div>
+  <div class="support-body" id="supportBody"></div>
 </div>
 
 <div class="toast" id="toast" role="status" aria-live="polite"></div>

@@ -17,6 +17,8 @@ from feature import (
     companion_from_text,
     find_kind,
     local_items,
+    named_place_information,
+    nearby_shopping_places,
 )
 
 try:
@@ -29,12 +31,26 @@ OLLAMA_MODEL = 'llama3.2:3b'
 FEEDBACK_FILE = DATA_DIR / 'user_feedback.csv'
 
 
-class Movio:
+class Optio:
     """Conversation and recommendation engine for a web or desktop UI."""
 
     def __init__(self, model_name=OLLAMA_MODEL):
         self.model_name = model_name
-        self.catalog = build_catalog()
+        try:
+            self.catalog = build_catalog()
+        except Exception:
+            self.catalog = pd.DataFrame([{
+                'item_id': 'fallback_fun',
+                'kind': 'entertainment',
+                'title': 'A simple fun break',
+                'tags': 'relaxing fun entertainment',
+                'description': 'A fallback entertainment idea while Optio reconnects to its catalog.',
+                'quality': 0.5,
+                'location': '',
+                'source': 'Optio fallback',
+                'text': 'relaxing fun entertainment',
+                'audience': 'alone friends family',
+            }])
         self._load_search_index()
         self._load_category_model()
         self.reset()
@@ -43,11 +59,14 @@ class Movio:
         vectorizer_file = MODEL_DIR / 'search_vectorizer.joblib'
         vectors_file = MODEL_DIR / 'item_vectors.npz'
 
-        if vectorizer_file.exists() and vectors_file.exists():
-            self.search_vectorizer = joblib.load(vectorizer_file)
-            self.item_vectors = load_npz(vectors_file)
-            if self.item_vectors.shape[0] == len(self.catalog):
-                return
+        try:
+            if vectorizer_file.exists() and vectors_file.exists():
+                self.search_vectorizer = joblib.load(vectorizer_file)
+                self.item_vectors = load_npz(vectors_file)
+                if self.item_vectors.shape[0] == len(self.catalog):
+                    return
+        except Exception:
+            pass
 
         self.search_vectorizer = TfidfVectorizer(
             stop_words='english', ngram_range=(1, 2), min_df=1, sublinear_tf=True
@@ -59,11 +78,13 @@ class Movio:
         encoder_file = MODEL_DIR / 'label_encoder.joblib'
         vectorizer_file = MODEL_DIR / 'classifier_vectorizer.joblib'
 
-        if model_file.exists() and encoder_file.exists() and vectorizer_file.exists():
-            self.category_model = joblib.load(model_file)
-            self.label_encoder = joblib.load(encoder_file)
-            self.classifier_vectorizer = joblib.load(vectorizer_file)
-        else:
+        self.category_model = None
+        try:
+            if model_file.exists() and encoder_file.exists() and vectorizer_file.exists():
+                self.category_model = joblib.load(model_file)
+                self.label_encoder = joblib.load(encoder_file)
+                self.classifier_vectorizer = joblib.load(vectorizer_file)
+        except Exception:
             self.category_model = None
 
     def reset(self):
@@ -81,12 +102,13 @@ class Movio:
         self.last_titles = []
         self.last_detected_kind = None
         self.waiting_for_feedback = False
+        self.waiting_to_explore = False
 
     def greeting(self):
         return self._reply(
             user_message='The conversation has just started.',
-            goal='Greet the user as Movio, briefly say that you recommend entertainment, and ask what name to use.',
-            fallback='Hi, I’m Movio. I can help you choose movies, songs, games, events, and fun places. What name should I call you?',
+            goal='Greet the user as Optio, briefly say that you recommend entertainment, and ask: "What is your name?" Optio\'s own name is fixed and must never be changed.',
+            fallback="Hi, I'm Optio. I can help you choose movies, songs, games, events, and fun places. What is your name?",
         )
 
     def _next_field(self):
@@ -95,7 +117,7 @@ class Movio:
     def _next_question(self):
         if self.language == 'fr':
             questions = {
-                'name': 'Comment dois-je t’appeler ?',
+                'name': "Comment dois-je t'appeler ?",
                 'taste': 'Quels films, chansons, jeux, événements ou parcs aimes-tu ?',
                 'companion': 'Tu veux y aller seul, avec des amis ou avec ta famille ?',
                 'country': 'Dans quel pays habites-tu ?',
@@ -127,8 +149,8 @@ class Movio:
             return questions.get(self._next_field(), 'الان دوست داری چه نوع سرگرمی‌ای داشته باشی؟')
 
         questions = {
-            'name': 'What name should I call you?',
-            'taste': 'What movies, songs, games, events, or parks do you enjoy?',
+            'name': 'What is your name?',
+            'taste': 'What movies, songs, games, events, parks, restaurants, cafes, travel places, shopping centers, or bazaars do you enjoy?',
             'companion': 'Will you go Alone, with Friends, or with Family?',
             'country': 'Which country do you live in?',
             'city': 'Which city do you live in?',
@@ -142,7 +164,7 @@ class Movio:
         arabic_words = {'مرحبا', 'اهلا', 'أهلا', 'شكرا', 'كيف', 'اريد', 'أريد', 'العربية', 'عربي'}
         persian_words = {'سلام', 'خوبی', 'مرسی', 'ممنون', 'فارسی', 'من', 'میخوام', 'می‌خوام', 'خداحافظ'}
 
-        if any(word in text for word in french_words) or any(mark in text for mark in 'àâçéèêëîïôùûüÿœ'):
+        if any(word in text for word in french_words) or any(mark in text for mark in 'àâçéèêëîïôöùûüÿœ'):
             return 'fr'
         if any(word in text for word in persian_words) or any(mark in text for mark in 'پچژگکی'):
             return 'fa'
@@ -184,21 +206,6 @@ class Movio:
         if detected:
             self.language = detected
 
-    @staticmethod
-    def _mentions(text, phrase):
-        """Match a phrase without matching inside a longer word.
-
-        Plain containment made every short token a trap: 'hi' matches
-        inside "something", "this", "which", "anything", so almost any
-        real request was misread as small talk and never reached the
-        recommender. Multi-word phrases keep plain containment.
-        """
-        import re
-
-        if ' ' in phrase:
-            return phrase in text
-        return re.search(r'(?<!\w)' + re.escape(phrase) + r'(?!\w)', text) is not None
-
     def _is_small_talk(self, message):
         text = message.lower().strip()
         foreign_casual = [
@@ -206,7 +213,7 @@ class Movio:
             'raconte une blague', 'مرحبا', 'اهلا', 'أهلا', 'شكرا', 'كيف حالك',
             'من أنت', 'من انت', 'قل نكتة',
         ]
-        if any(self._mentions(text, phrase) for phrase in foreign_casual):
+        if any(phrase in text for phrase in foreign_casual):
             return True
 
         casual = [
@@ -220,14 +227,14 @@ class Movio:
             'park', 'ride', 'watch', 'play', 'entertainment', 'فیلم', 'بازی', 'موسیقی',
             'آهنگ', 'رویداد', 'کنسرت', 'جشنواره', 'پارک', 'سرگرمی',
         ]
-        return any(self._mentions(text, phrase) for phrase in casual) or (
-            text.endswith(('?', '؟')) and not any(self._mentions(text, word) for word in entertainment)
+        return any(phrase in text for phrase in casual) or (
+            text.endswith(('?', '؟')) and not any(word in text for word in entertainment)
         )
 
     def _is_goodbye(self, message):
         text = message.lower().strip()
         foreign_goodbyes = [
-            'au revoir', 'à bientôt', 'a bientôt', 'à plus', 'a plus', 'je dois y aller',
+            'au revoir', 'à bientôt', 'a bientot', 'à plus', 'a plus', 'je dois y aller',
             'je vais dormir', 'bonne nuit', 'adieu', 'وداعا', 'مع السلامة',
             'يجب أن أذهب', 'يجب ان اذهب', 'سأنام', 'سانام', 'تصبح على خير',
         ]
@@ -244,6 +251,74 @@ class Movio:
         ]
         return any(phrase in text for phrase in goodbye_phrases)
 
+    def _is_yes(self, message):
+        text = message.lower().strip()
+        yes_answers = {
+            'yes', 'yeah', 'yep', 'sure', 'okay', 'ok', 'of course', 'please', 'continue',
+            '\u0628\u0644\u0647', '\u0622\u0631\u0647', '\u062d\u062a\u0645\u0627\u064b', '\u0646\u0639\u0645',
+        }
+        return text in yes_answers
+
+    def _is_no(self, message):
+        text = message.lower().strip()
+        no_answers = {
+            'no', 'nope', 'not now', 'nothing else', 'that is all', 'no thanks',
+            '\u0646\u0647', '\u062e\u06cc\u0631', '\u0644\u0627',
+        }
+        return text in no_answers
+
+    def _has_specific_request(self, message):
+        text = str(message).lower()
+        specific_terms = [
+            'movie', 'film', 'cinema', 'game', 'gaming', 'music', 'song', 'playlist',
+            'event', 'concert', 'festival', 'theme park', 'amusement park', 'ride',
+            'restaurant', 'cafe', 'coffee', 'travel', 'trip', 'vacation', 'destination',
+            'shopping center', 'shopping centre', 'mall', 'bazaar', 'bazar', 'market', 'souq',
+            '\u0641\u06cc\u0644\u0645', '\u0628\u0627\u0632\u06cc', '\u0622\u0647\u0646\u06af', '\u0645\u0648\u0633\u06cc\u0642\u06cc',
+            '\u0631\u0633\u062a\u0648\u0631\u0627\u0646', '\u06a9\u0627\u0641\u0647', '\u0633\u0641\u0631', '\u0628\u0627\u0632\u0627\u0631',
+            '\u0641\u064a\u0644\u0645', '\u0644\u0639\u0628\u0629', '\u0623\u063a\u0646\u064a\u0629', '\u0645\u0648\u0633\u064a\u0642\u0649',
+            '\u0645\u0637\u0639\u0645', '\u0645\u0642\u0647\u0649', '\u0633\u0641\u0631', '\u0633\u0648\u0642',
+        ]
+        return any(term in text for term in specific_terms)
+
+    def _specific_place_name(self, text):
+        import re
+
+        match = re.search(r'\b(?:named|called)\s+["“]?(.+?)["”]?\s*[.!?]?$', text, re.I)
+        return match.group(1).strip() if match else ''
+
+    def _direct_answer(self, text):
+        """Answer a specific request before collecting the optional preference profile."""
+        requested_kind = self._detect_kind(text)
+        place_name = self._specific_place_name(text)
+        named_place = named_place_information(place_name, requested_kind) if place_name else pd.DataFrame()
+        picks = named_place if not named_place.empty else self.recommend(text)
+        self.last_detected_kind = requested_kind or self.last_detected_kind
+        self.last_request = text
+        self.last_titles = picks['title'].dropna().tolist()
+        self.waiting_for_feedback = False
+        self.waiting_to_explore = True
+        kind = self.last_detected_kind or 'entertainment'
+
+        details = []
+        for _, item in picks.head(3).iterrows():
+            location = f" in {item['location']}" if str(item.get('location', '')).strip() else ''
+            details.append(f"{item['title']} — {item['tags']}{location}")
+        summary = '; '.join(details) or 'I could not find verified catalog details for that exact place yet.'
+        answer = self._reply(
+            text,
+            f'Answer the user\'s specific {kind} request directly using only the available candidates and their details. '
+            'Do not ask profile questions. End exactly with: Is there anything else you want to explore?',
+            candidates=picks,
+            fallback=f'{summary}. Is there anything else you want to explore?',
+        )
+        return {
+            'text': answer,
+            'recommendations': picks[['title', 'kind', 'tags', 'location']].to_dict('records'),
+            'profile_complete': False,
+            'detected_kind': self.last_detected_kind,
+        }
+
     def _name_from_text(self, message):
         import re
 
@@ -251,7 +326,7 @@ class Movio:
         if match:
             return match.group(1).title()
 
-        french_match = re.search(r"(?:je m'appelle|mon nom est)\s+([a-zA-ZÀ-ÿ-]+)", message, re.I)
+        french_match = re.search(r"(?:je m'appelle|mon nom est)\s+([A-Za-zÀ-ÖØ-öø-ÿ-]+)", message, re.I)
         if french_match:
             return french_match.group(1).title()
 
@@ -319,20 +394,44 @@ class Movio:
                 'فیلم', 'فيلم', 'cinéma',
             ],
             'game': [
-                'video game', 'playstation', 'xbox', 'nintendo', 'steam', 'game', 'jeu',
+                'video game', 'play a game', 'gaming', 'playstation', 'xbox', 'nintendo', 'steam', 'game', 'jeu',
                 'بازی', 'لعبة',
             ],
             'song': [
-                'playlist', 'listen to', 'song', 'music', 'chanson', 'musique',
+                'playlist', 'listen to', 'listen', 'song', 'music', 'audio', 'track', 'album', 'tune',
+                'rap', 'rock', 'jazz', 'chanson', 'musique',
                 'آهنگ', 'موسیقی', 'اغنية', 'أغنية', 'موسيقى',
             ],
             'event': [
-                'concert', 'festival', 'live show', 'event', 'spectacle', 'événement', 'evenement',
+                'concert', 'festival', 'live show', 'event', 'spectacle', 'night out', 'show tonight',
+                'things to do', 'événement', 'evenement',
                 'کنسرت', 'رویداد', 'جشنواره', 'حفلة', 'فعالية', 'مهرجان',
             ],
             'theme park': [
-                'theme park', 'amusement park', 'roller coaster', 'water park', 'parc d’attractions',
+                'theme park', 'amusement park', 'roller coaster', 'water park', 'attraction', 'fun place',
+                "fun places", 'rides', "parc d'attractions",
                 'پارک تفریحی', 'شهربازی', 'مدينة ملاهي', 'منتزه ترفيهي',
+            ],
+            'restaurant': [
+                'restaurant', 'resto', 'dinner', 'lunch', 'food place', 'where to eat',
+                '\u0631\u0633\u062a\u0648\u0631\u0627\u0646', '\u0645\u0637\u0639\u0645',
+            ],
+            'cafe': [
+                'cafe', 'café', 'coffee shop', 'coffeehouse', 'coffee',
+                '\u06a9\u0627\u0641\u0647', '\u0645\u0642\u0647\u0649',
+            ],
+            'travel place': [
+                'travel', 'trip', 'vacation', 'holiday', 'destination', 'place to visit', 'tourism',
+                'voyage', 'voyager', '\u0633\u0641\u0631', '\u0645\u0642\u0635\u062f', '\u0648\u062c\u0647\u0629',
+            ],
+            'shopping center': [
+                'shopping center', 'shopping centre', 'mall', 'shopping mall', 'stores',
+                '\u0645\u0631\u06a9\u0632 \u062e\u0631\u06cc\u062f', '\u0645\u062c\u062a\u0645\u0639 \u062e\u0631\u06cc\u062f',
+                '\u0645\u0631\u0643\u0632 \u062a\u0633\u0648\u0642',
+            ],
+            'bazaar': [
+                'bazaar', 'bazar', 'market', 'souq', 'souk', 'marketplace',
+                '\u0628\u0627\u0632\u0627\u0631', '\u0633\u0648\u0642',
             ],
         }
         scores = {
@@ -357,18 +456,18 @@ class Movio:
         confidence = float(top_two[-1])
         margin = confidence - float(top_two[-2])
 
-        if confidence >= 0.65 and margin >= 0.12:
+        if confidence >= 0.75 and margin >= 0.20:
             return self.label_encoder.inverse_transform([probabilities.argmax()])[0]
         return None
 
     def _french_fallback(self, goal, candidates):
         goal = goal.lower()
         if 'goodbye' in goal:
-            return 'Au revoir ! J’ai été ravi de discuter avec toi. Reviens quand tu veux pour une nouvelle idée de divertissement.'
+            return "Au revoir ! J'ai été ravi de discuter avec toi. Reviens quand tu veux pour une nouvelle idée de divertissement."
         if candidates is not None and not candidates.empty:
-            return 'J’ai trouvé quelques options qui correspondent à tes goûts. Dis-moi ensuite si tu les aimes ou non.'
+            return "J'ai trouvé quelques options qui correspondent à tes goûts. Dis-moi ensuite si tu les aimes ou non."
         if 'name' in goal:
-            return 'Ravi de faire ta connaissance. Comment dois-je t’appeler ?'
+            return "Ravi de faire ta connaissance. Comment dois-je t'appeler ?"
         if 'alone, friends, or family' in goal or 'alone, with friends, or with family' in goal:
             return 'Pour mieux te conseiller, tu veux y aller seul, avec des amis ou avec ta famille ?'
         if 'country' in goal:
@@ -439,10 +538,10 @@ class Movio:
 
     def _unsupported_language_message(self):
         messages = {
-            'en': 'Sorry, Movio is still being improved and currently supports English, French, Farsi, and Arabic.',
-            'fr': 'Désolé, Movio est encore en amélioration et prend actuellement en charge l’anglais, le français, le farsi et l’arabe.',
-            'fa': 'متأسفم، Movio هنوز در حال بهتر شدن است و فعلاً از انگلیسی، فرانسوی، فارسی و عربی پشتیبانی می‌کند.',
-            'ar': 'عذراً، ما زال Movio قيد التطوير ويدعم حالياً الإنجليزية والفرنسية والفارسية والعربية.',
+            'en': 'Sorry, Optio is still being improved and currently supports English, French, Farsi, and Arabic.',
+            'fr': "Désolé, Optio est encore en amélioration et prend actuellement en charge l'anglais, le français, le farsi et l'arabe.",
+            'fa': 'متأسفم، Optio هنوز در حال بهتر شدن است و فعلاً از انگلیسی، فرانسوی، فارسی و عربی پشتیبانی می‌کند.',
+            'ar': 'عذراً، ما زال Optio قيد التطوير ويدعم حالياً الإنجليزية والفرنسية والفارسية والعربية.',
         }
         return messages[self.language]
 
@@ -462,11 +561,14 @@ class Movio:
         if candidates is not None and not candidates.empty:
             candidate_text = candidates[['title', 'kind', 'tags', 'location']].to_csv(index=False)
 
-        system = f'''You are Movio, a warm and conversational entertainment assistant.
-You recommend movies, songs, games, events, theme parks, and local fun places.
+        system = f'''You are Optio, a warm and conversational entertainment assistant.
+You recommend movies, songs, games, events, theme parks, restaurants, cafes, travel places, shopping centers, and bazaars.
+Your name is permanently Optio. Never ask the user to name, rename, or choose a name for you. You may only ask for the user's own name.
 {language_instruction}
-You may answer a short harmless off-topic question or casual chat in one or two sentences, then gently return to entertainment or the next profile question. If the user is saying goodbye, give a warm short farewell and do not ask another question. Do not let the discussion become a general-purpose conversation.
+Be friendly, natural, and conversational, like a helpful entertainment companion. Answer the user's exact request directly. Ask one short follow-up only when it is truly needed for a better recommendation. You may answer a short harmless off-topic question or casual chat in one or two sentences, then gently return to entertainment. If reliable information is unavailable, say sorry honestly and invite the user to explore another fun activity. If the user is saying goodbye, give a warm short farewell and do not ask another question. Do not let the discussion become a general-purpose conversation.
 Profile: {self._profile_summary()}.
+Current requested category: {self.last_detected_kind or 'not specified'}.
+When the current requested category is specified, stay strictly in that category. Do not suggest, ask about, or compare a different category unless the user explicitly changes their request.
 If recommendations are provided, only mention titles from them. Never invent titles, ratings, locations, or event dates.'''
         prompt = f'User message: {user_message}\nTask: {goal}\nRecommendations:\n{candidate_text}'
 
@@ -547,9 +649,23 @@ If recommendations are provided, only mention titles from them. Never invent tit
             return None
         return self.label_encoder.inverse_transform([probability.argmax()])[0]
 
-    def recommend(self, request, count=5):
+    def _recommend_core(self, request, count=5):
         kind = self._detect_kind(request)
         self.last_detected_kind = kind
+        if kind in {'shopping center', 'bazaar'}:
+            city = self.profile['city'] or ''
+            country = self.profile['country'] or ''
+            lower_request = request.lower()
+            for marker in (' near ', ' in '):
+                if marker in lower_request:
+                    requested_place = request[lower_request.rfind(marker) + len(marker):].strip(' .!?')
+                    if requested_place:
+                        city, country = requested_place, ''
+                    break
+            live_places = nearby_shopping_places(city, country, kind, limit=count)
+            if not live_places.empty:
+                return live_places.head(count).reset_index(drop=True)
+
         companion = self.profile['companion'] or 'alone'
         color = self.profile['color'] or ''
         learned_taste, rejected = self._memory()
@@ -570,18 +686,41 @@ If recommendations are provided, only mention titles from them. Never invent tit
 
         if kind:
             matching = result[result['kind'].eq(kind)]
-            if not matching.empty:
-                result = matching
+            if matching.empty:
+                return result.iloc[0:0].copy()
+            result = matching
 
-        picks = result.sort_values('score', ascending=False).head(count).copy()
+        ranked = result.sort_values('score', ascending=False)
+        if kind is None:
+            # A broad request should show the user that Optio covers every entertainment type.
+            first_from_each_kind = []
+            for item_kind in ('movie', 'song', 'game', 'event', 'theme park', 'restaurant', 'cafe', 'travel place', 'shopping center', 'bazaar'):
+                options = ranked[ranked['kind'].eq(item_kind)]
+                if not options.empty:
+                    first_from_each_kind.append(options.iloc[[0]])
+            picks = pd.concat(first_from_each_kind, ignore_index=True) if first_from_each_kind else ranked.iloc[0:0]
+            remaining = ranked[~ranked['item_id'].isin(picks['item_id'])]
+            picks = pd.concat([picks, remaining], ignore_index=True).head(count).copy()
+        else:
+            picks = ranked.head(count).copy()
+
         nearby = local_items(self.catalog, self.profile['city'], self.profile['country'], limit=3)
+        if kind:
+            nearby = nearby[nearby['kind'].eq(kind)]
         if not nearby.empty:
             nearby['score'] = nearby['quality']
             picks = pd.concat([picks, nearby], ignore_index=True)
             picks = picks.drop_duplicates(['kind', 'title']).head(count)
         return picks.reset_index(drop=True)
 
-    def reply(self, message):
+    def recommend(self, request, count=5):
+        """Return a stable recommendation table even if one source is unavailable."""
+        try:
+            return self._recommend_core(request, count=count)
+        except Exception:
+            return pd.DataFrame(columns=['item_id', 'kind', 'title', 'tags', 'description', 'quality', 'location', 'source'])
+
+    def _reply_core(self, message):
         """Return a UI-friendly dictionary for every user message."""
         text = str(message).strip()
         if not text:
@@ -631,6 +770,30 @@ If recommendations are provided, only mention titles from them. Never invent tit
                 'profile_complete': self._next_field() is None,
             }
 
+        if self.waiting_to_explore:
+            if self._is_yes(text):
+                self.waiting_to_explore = False
+                next_question = self._next_question()
+                answer = self._reply(
+                    text,
+                    f'Acknowledge positively and continue learning their preferences by asking: {next_question}',
+                    fallback=f"Great. Let's make the next idea personal. {next_question}",
+                )
+                return {'text': answer, 'recommendations': [], 'profile_complete': False}
+            if self._is_no(text):
+                self.waiting_to_explore = False
+                answer = self._reply(
+                    text,
+                    'Give a warm, short farewell. Do not ask another question.',
+                    fallback='No problem. Have a great day!',
+                )
+                return {'text': answer, 'recommendations': [], 'profile_complete': False}
+            self.waiting_to_explore = False
+
+        requested_kind = self._detect_kind(text)
+        if requested_kind and self._has_specific_request(text):
+            return self._direct_answer(text)
+
         field = self._next_field()
         if field and self._is_small_talk(text):
             answer = self._small_talk_reply(text)
@@ -641,8 +804,8 @@ If recommendations are provided, only mention titles from them. Never invent tit
             if name is None:
                 answer = self._reply(
                     text,
-                    'Briefly respond, then ask the user what name Movio should use.',
-                    fallback='I’d love to get to know your taste. What name should I call you?',
+                    "Briefly respond, then ask for the user's own name. Never ask the user to rename Optio.",
+                    fallback="I'd love to get to know your taste. What is your name?",
                 )
             else:
                 self.profile['name'] = name
@@ -655,6 +818,7 @@ If recommendations are provided, only mention titles from them. Never invent tit
 
         if field == 'taste':
             self.profile['taste'] = text
+            self.last_detected_kind = self._detect_kind(text) or self.last_detected_kind
             answer = self._reply(
                 text,
                 'Acknowledge their taste and ask whether they are going Alone, with Friends, or with Family.',
@@ -693,7 +857,7 @@ If recommendations are provided, only mention titles from them. Never invent tit
             answer = self._reply(
                 text,
                 'Confirm their city and ask their favorite color.',
-                fallback='Great, I’ll use that for nearby ideas too. What is your favorite color?',
+                fallback="Great, I'll use that for nearby ideas too. What is your favorite color?",
             )
             return {'text': answer, 'recommendations': [], 'profile_complete': False}
 
@@ -707,10 +871,15 @@ If recommendations are provided, only mention titles from them. Never invent tit
                 )
             else:
                 self.profile['color'] = color
+                selected_kind = self.last_detected_kind
+                next_request = (
+                    f'What kind of {selected_kind} would you like right now?'
+                    if selected_kind else 'What kind of entertainment are you in the mood for?'
+                )
                 answer = self._reply(
                     text,
-                    'Acknowledge their color and ask what entertainment they want now.',
-                    fallback=f'{color.title()} is a great choice. What kind of entertainment are you in the mood for?',
+                    f'Acknowledge their color and ask only about {selected_kind or "their chosen entertainment"}. Do not ask about another category.',
+                    fallback=f'{color.title()} is a great choice. {next_request}',
                 )
             return {'text': answer, 'recommendations': [], 'profile_complete': self._next_field() is None}
 
@@ -721,7 +890,7 @@ If recommendations are provided, only mention titles from them. Never invent tit
             answer = self._reply(
                 text,
                 'Thank the user for their feedback and ask what they would like to do next.',
-                fallback='Thanks — I’ll remember that. What would you like to do next?',
+                fallback="Thanks — I'll remember that. What would you like to do next?",
             )
             return {'text': answer, 'recommendations': [], 'profile_complete': True}
 
@@ -729,15 +898,33 @@ If recommendations are provided, only mention titles from them. Never invent tit
             answer = self._small_talk_reply(text)
             return {'text': answer, 'recommendations': [], 'profile_complete': True}
 
+        if not self._has_specific_request(text):
+            answer = self._reply(
+                text,
+                'Reply naturally and ask which specific entertainment, place, or activity the user wants to explore. Do not give recommendations yet.',
+                fallback='What specific fun thing would you like to explore? You can ask for a movie, game, song, café, restaurant, event, travel place, mall, or bazaar.',
+            )
+            return {'text': answer, 'recommendations': [], 'profile_complete': True}
+
         picks = self.recommend(text)
         self.last_request = text
         self.last_titles = picks['title'].dropna().tolist()
         self.waiting_for_feedback = not picks.empty
+        selected_kind = self.last_detected_kind
+        category_instruction = (
+            f'Keep the reply strictly focused on {selected_kind}. Do not mention or ask about other entertainment categories. '
+            f'Give a warm, short {selected_kind} recommendation based only on the available candidates. Ask for Like or Dislike feedback.'
+            if selected_kind else
+            'Give a warm, short recommendation based on the available candidates. Ask for Like or Dislike feedback.'
+        )
         answer = self._reply(
             text,
-            'Give a warm, short recommendation based on the available candidates. Ask for Like or Dislike feedback.',
+            category_instruction,
             candidates=picks,
-            fallback='I found a few options that fit your taste. Tell me Like or Dislike after you look through them.',
+            fallback=(
+                f'I found a few {selected_kind} options that fit your taste. Tell me Like or Dislike after you look through them.'
+                if selected_kind else 'I found a few options that fit your taste. Tell me Like or Dislike after you look through them.'
+            ),
         )
         return {
             'text': answer,
@@ -746,15 +933,46 @@ If recommendations are provided, only mention titles from them. Never invent tit
             'detected_kind': self.last_detected_kind,
         }
 
+    def _recovery_response(self):
+        messages = {
+            'en': "I'm sorry, I couldn't get a reliable answer for that right now. Tell me another fun thing you'd like to do and I'll help.",
+            'fr': "Désolé, je n'ai pas pu obtenir une réponse fiable pour le moment. Dis-moi une autre activité sympa à explorer et je t'aide.",
+            'fa': 'ببخشید، فعلاً نتوانستم جواب مطمئنی برای این پیدا کنم. یک سرگرمی دیگر بگو تا کمکت کنم.',
+            'ar': 'عذراً، لم أتمكن من الحصول على إجابة موثوقة الآن. أخبرني عن نشاط ممتع آخر وسأساعدك.',
+        }
+        answer = messages.get(getattr(self, 'language', 'en'), messages['en'])
+        try:
+            self.history.extend([
+                {'role': 'assistant', 'content': answer},
+            ])
+        except Exception:
+            pass
+        return {
+            'text': answer,
+            'recommendations': [],
+            'profile_complete': False,
+            'detected_kind': None,
+        }
+
+    def reply(self, message):
+        """Always return a safe, conversational response to the UI."""
+        try:
+            response = self._reply_core(message)
+            if isinstance(response, dict) and str(response.get('text', '')).strip():
+                return response
+        except Exception:
+            pass
+        return self._recovery_response()
+
 
 if __name__ == '__main__':
-    bot = Movio()
-    print(f'Movio: {bot.greeting()}')
+    bot = Optio()
+    print(f'Optio: {bot.greeting()}')
     while True:
         user_text = input('You: ').strip()
         if user_text.lower() in {'quit', 'exit'}:
             break
         response = bot.reply(user_text)
-        print(f"Movio: {response['text']}")
+        print(f"Optio: {response['text']}")
         for item in response['recommendations']:
             print(f"  - {item['title']} ({item['kind']})")

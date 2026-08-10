@@ -1,86 +1,52 @@
-# Movio
+# Optio — AI Entertainment Decision System
 
-A conversational entertainment recommender. You tell it who you are and what
-you feel like; it suggests movies, games and events from an 11,541-item
-catalogue and explains, in plain words, why it picked each one.
+You say what you feel like. **Two different models answer at the same time**, and
+you pick whichever read you better. That choice is saved to your account and
+shapes what you are shown next.
 
-**Live preview:** <https://cheshmiiliya-tech.github.io/marquee-entertainment-ui/>
+The catalogue is 36,016 movies, games, songs, events and places built from five
+public datasets.
+
+**Static preview:** <https://cheshmiiliya-tech.github.io/optio/>
 
 ---
 
-## Two ways to run it
-
-### 1. Full system (the real model)
+## Run it
 
 ```bash
-cd Movio_final_code
+cd Optio
 pip install -r requirements.txt
-python train_model.py        # builds the dataset, trains the classifier
-python server.py             # serves the API and the UI together
+
+python train_optio.py     # builds the catalogue, trains the LightGBM classifier
+python train_deep.py      # trains the neural network on the same catalogue
+python app.py             # serves the UI, both models and the database
 ```
 
-Then open <http://127.0.0.1:8000>.
+Open <http://127.0.0.1:8000>. Create an account, and you are in.
 
-`train_model.py` downloads five public datasets on first run and writes
-`data/entertainment_dataset.csv`, then trains a LightGBM classifier into
-`model/`. It takes a while — the music metadata alone is ~350 MB.
+Optional, for natural replies instead of the scripted fallback:
 
-### 2. Static preview (no Python)
+```bash
+ollama pull llama3.2:3b
+```
 
-Open `index.html`, or visit the GitHub Pages link above.
-
-The page detects that no server is answering and falls back to a 420-item
-slice of the **same** catalogue, scored with the **same** formula
-reimplemented in the browser. It says so on screen. What is missing is the
-LightGBM classifier and the language model — everything else is real.
+**Python 3.12 is what the models were saved with.** They are pickles, so a
+different NumPy major version will refuse to load them. If you see
+`numpy._core` or `MT19937 is not a known BitGenerator`, you are on the wrong
+interpreter — or just retrain with the two scripts above.
 
 ---
 
-## How the pieces fit
+## The two models
 
-```
-train_model.py ──► model/          LightGBM classifier + TF-IDF vectorisers
-      │                            (predicts which KIND a request is about)
-      ▼
-  feature.py   ──► data/           builds the catalogue from 5 public sources
-      │                            movies · games · events · songs · parks
-      ▼
-  chatbot.py   ──► Movio           profile, conversation, recommend()
-      │
-      ▼
-  server.py    ──► HTTP API        the only bridge to the browser
-      │
-      ▼
- index.html + assets/              chat, profile, picks, explanation
-```
+| | **Optio** | **Deep Learning** |
+|---|---|---|
+| Classifier | LightGBM gradient boosting | MLP, 3 hidden layers (384 · 192 · 96) |
+| Features | TF-IDF, 1–2 grams, 60k vocabulary | TF-IDF → TruncatedSVD → L2 → network |
+| Trained by | `train_optio.py` | `train_deep.py` |
+| Artefacts | `model/optio/` | `model/deep/` |
 
-| File | What it does |
-|---|---|
-| `Movio_final_code/feature.py` | Downloads and merges the five datasets into one catalogue |
-| `Movio_final_code/train_model.py` | Trains the LightGBM kind-classifier, saves it and the metrics |
-| `Movio_final_code/chatbot.py` | The `Movio` class: profile, conversation, scoring, feedback |
-| `Movio_final_code/server.py` | Wraps `Movio` in a FastAPI app and serves the UI |
-| `index.html` | Markup only |
-| `assets/styles.css` | Design tokens, both themes, all components |
-| `assets/app.js` | Front end; talks to the API, or falls back to static mode |
-| `assets/catalog-sample.json` | 420 real catalogue rows for the static build |
-
-### The API
-
-| Endpoint | Purpose |
-|---|---|
-| `GET /api/status` | Catalogue size, whether the classifier loaded, which LLM is active |
-| `POST /api/chat` | One turn of conversation, plus scored picks |
-| `GET /api/profile` | The six-field profile Movio has built so far |
-| `POST /api/feedback` | Writes a like/dislike into `data/user_feedback.csv` |
-| `GET /api/explain` | Full score breakdown for one item |
-| `GET /api/docs` | Interactive Swagger UI |
-
----
-
-## How a recommendation is scored
-
-Straight from `chatbot.py`:
+Both share the same retrieval core:
 
 ```
 score = 0.78 · similarity      TF-IDF cosine between your request and the item
@@ -89,49 +55,92 @@ score = 0.78 · similarity      TF-IDF cosine between your request and the item
       − 0.35 · rejected        did you turn this exact title down before
 ```
 
-The percentage on screen rescales the achievable `0.05 – 0.55` range onto
-`0 – 100`; the score itself is untouched. `server.py` and `assets/app.js` use
-the same two constants so the live and static builds agree.
+What differs is the **search index each one carries** and **how it reads the
+kind** of thing you are asking for — which changes the slice of the catalogue
+that gets searched, and so the shortlist. When both read a request the same way
+the shortlists are identical, and the interface says so instead of pretending
+there is a choice to make.
 
-Your six profile answers all feed in: **taste** and the current request go
-into the query text, **companion** adds its own vocabulary and the audience
-bonus, **colour** maps to a genre hint, and **city/country** pull in nearby
-events.
+### The preference loop
 
-### Why the interface says what it says
+1. You ask for something.
+2. `POST /api/compare` runs it through both engines.
+3. Two shortlists appear side by side, each in its own colour.
+4. You choose the better one — or "neither, really".
+5. `POST /api/choose` stores the verdict against your account and marks the
+   winning titles as liked, so the next request is scored with that preference
+   already applied.
 
-Every number has a plain-language counterpart. The radial graph shows the four
-signals as a share of the score — thicker line, bigger influence. The verdict
-is one of four sentences rather than a code:
-
-| Reading | Shown as |
-|---|---|
-| 70 % and above | **Strong match** |
-| 45 – 69 % | **Worth a look** |
-| below 45 % | **Not sure — you decide** |
-| you rejected it | **You said no** |
-
-**Show details** in the header reveals the raw numbers: each signal's raw
-value, its weight, its contribution and its share.
+Every judgement lands in the `choices` table; the running tally is on the page.
 
 ---
 
-## Design notes
+## What is stored
 
-The page speaks in two deliberately separate voices so it is always clear who
-asserted what.
+SQLite, at `Optio/data/optio.db` — created on first run, never committed.
 
-| | **You** | **The model** |
-|---|---|---|
-| Colour | warm tungsten | desaturated instrument blue |
-| Type | condensed caps | monospace, tabular numerals |
-| Used for | your profile, your answers, your feedback | scores, shares, the graph |
+| Table | Holds |
+|---|---|
+| `users` | account, display name, PBKDF2-hashed password, saved profile |
+| `sessions` | every login and logout, with timestamps |
+| `events` | register, login, logout, message, request, feedback, reset |
+| `choices` | which engine won each round, and both shortlists |
+| `prefs` | every like and dislike, per account |
 
-When the model is unsure it hands the decision back — and switches to the
-warm tungsten to say so, because at that moment the call is yours.
+Passwords are PBKDF2-HMAC-SHA256 with a per-user salt, 120,000 rounds. This is
+a student project, not a bank, but there is no excuse for plain text.
 
-Both themes are designed rather than inverted; the OS preference is the
-default and the header button overrides it.
+---
+
+## Layout
+
+```
+index.html            the app
+login.html            sign in / create account
+assets/
+  styles.css          design tokens, both themes, every component
+  app.js              front end; live against app.py, or static fallback
+  auth.js             sign in / register
+  catalog-sample.json 420 real catalogue rows for the static preview
+
+Optio/
+  app.py              FastAPI: auth, both engines, SQLite, serves the UI
+  db.py               schema and queries
+  engines.py          loads both models, runs the comparison
+  chatbot.py          the Optio class: profile, conversation, scoring
+  feature.py          builds the catalogue from five public sources
+  train_optio.py      LightGBM training
+  train_deep.py       neural-network training
+  rebuild_indexes.py  refit both search indexes against the catalogue
+```
+
+### API
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /api/register` · `/api/login` · `/api/logout` | accounts |
+| `GET /api/me` | account, profile, preferences, session history |
+| `POST /api/chat` | one conversation turn |
+| `POST /api/compare` | the same request through **both** engines |
+| `POST /api/choose` | record which engine won |
+| `POST /api/feedback` | like / dislike one title |
+| `GET /api/status` | what loaded, what did not, and why |
+| `GET /api/docs` | interactive Swagger UI |
+
+---
+
+## Support chat
+
+The bottom-right button is wired for [Chatbase](https://www.chatbase.co). Open
+`assets/app.js`, find `CHATBASE_ID`, and paste your agent id:
+
+```js
+const CHATBASE_ID = "your-agent-id-here";
+```
+
+The real widget then loads and replaces the placeholder panel. Until an id is
+set, the button opens a panel explaining exactly that rather than pretending to
+be a live agent.
 
 ---
 
@@ -140,13 +149,28 @@ default and the header button overrides it.
 - **Quality can outweigh similarity.** A TF-IDF cosine rarely exceeds `0.35`
   while `quality` reaches `1.0`, so despite the `0.78` weight the quality term
   often dominates. Normalising similarity before weighting would make the
-  weights mean what they say.
-- **`theme park` and `song` need a working connection.** Both loaders were
-  skipped when the catalogue in this repo was built; the other three
-  succeeded. Re-run `python train_model.py --refresh` to pick them up.
+  weights mean what they say. This is the recommender's own behaviour and has
+  been left for its authors.
+- **Saved indexes go stale when the catalogue grows.** `chatbot.py` only reuses
+  a saved index when its row count matches the catalogue exactly, and silently
+  refits otherwise — which made both engines return identical shortlists.
+  `rebuild_indexes.py` fixes it without a full retrain; `train_*.py` fixes it
+  properly.
+- **The static preview cannot do accounts.** GitHub Pages has no Python, so the
+  hosted build runs on a 420-item slice with the same scoring formula and says
+  so on screen. Sign-in, the trained classifiers and saved history all need
+  `app.py`.
 
-## Credits
+---
 
-MovieLens (GroupLens) · Free Music Archive metadata · Fáilte Ireland Open Data
-· ThemeParks.wiki · public video-game metadata. All titles belong to their
-respective sources.
+## Built by
+
+| | |
+|---|---|
+| **Iliya Cheshmi** | UI |
+| **Reza Shahbazi** | UI |
+| **Hosna Zandavi** | AI |
+| **Radin Jalab** | AI |
+
+Data: MovieLens (GroupLens) · Free Music Archive · Spotify song metadata ·
+Fáilte Ireland Open Data · ThemeParks.wiki. All titles belong to their sources.

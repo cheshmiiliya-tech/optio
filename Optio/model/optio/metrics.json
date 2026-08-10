@@ -1,0 +1,55 @@
+{
+  "validation_accuracy": 99.9028,
+  "validation_loss": 0.0081,
+  "best_iteration": 40,
+  "category_scores": {
+    "cafe": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1_score": 1.0,
+      "support": 2
+    },
+    "event": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1_score": 1.0,
+      "support": 136
+    },
+    "game": {
+      "precision": 1.0,
+      "recall": 0.9955,
+      "f1_score": 0.9977,
+      "support": 220
+    },
+    "movie": {
+      "precision": 1.0,
+      "recall": 0.9969,
+      "f1_score": 0.9985,
+      "support": 1948
+    },
+    "restaurant": {
+      "precision": 0.2222,
+      "recall": 1.0,
+      "f1_score": 0.3636,
+      "support": 2
+    },
+    "song": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1_score": 1.0,
+      "support": 4859
+    },
+    "theme park": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1_score": 1.0,
+      "support": 31
+    },
+    "travel place": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1_score": 1.0,
+      "support": 2
+    }
+  }
+}
