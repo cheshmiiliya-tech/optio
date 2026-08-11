@@ -79,8 +79,15 @@
   /* ============================================================
      TRANSPORT
      ============================================================ */
+  /* Paths must be relative. On GitHub Pages this site lives under /optio/,
+     so a leading slash escapes to the domain root and 404s. BASE is the
+     directory this page is served from, with a trailing slash. */
+  const BASE = location.pathname.replace(/[^/]*$/, "");
+  const url = function(path){ return BASE + String(path).replace(/^\//, ""); };
+  const LOGIN_URL = function(){ return url("login.html"); };
+
   async function api(path, options){
-    const r = await fetch(path, Object.assign({credentials:"include"}, options || {}));
+    const r = await fetch(url(path), Object.assign({credentials:"include"}, options || {}));
     const body = await r.json().catch(function(){ return {}; });
     if(!r.ok) throw Object.assign(new Error(body.error || r.statusText), {status:r.status, body:body});
     return body;
@@ -300,7 +307,7 @@
     if(!text.trim()) return;
     if(LIVE && !me){
       toast("Please sign in first.");
-      location.href = "/login";
+      location.href = LOGIN_URL();
       return;
     }
     addMsg("you", text);
@@ -319,7 +326,7 @@
         reply = staticTurn(text);
       }
     }catch(err){
-      if(err.status === 401){ location.href = "/login"; return; }
+      if(err.status === 401){ location.href = LOGIN_URL(); return; }
       reply = {text:"I lost contact with the model. Is app.py still running?"};
     }
 
@@ -337,6 +344,8 @@
     }
     renderProfile();
     renderHints();
+    loadPredicted();
+    loadLineup();
   }
 
   function firstItem(){
@@ -506,7 +515,7 @@
           : "Saved. " + (winner === "optio" ? "Optio" : "Deep Learning")
             + " wins this round, and its picks are now in your likes.");
       }catch(err){
-        if(err.status === 401){ location.href = "/login"; return; }
+        if(err.status === 401){ location.href = LOGIN_URL(); return; }
         toast("Could not save that choice.");
       }
     }else{
@@ -624,7 +633,7 @@
                                      kind:selected.kind, engine:selected.engine, request:lastRequest});
         toast("Saved to your account. It changes what you're shown next time.");
       }catch(err){
-        if(err.status === 401){ location.href = "/login"; return; }
+        if(err.status === 401){ location.href = LOGIN_URL(); return; }
         toast("Could not save that.");
       }
     }else{
@@ -632,6 +641,7 @@
                                 : "Noted — that drops the score by 0.35 next time.");
     }
     renderWhy();
+    loadPredicted();
   });
 
   function renderTech(p){
@@ -664,6 +674,177 @@
     $("tech").hidden = !showTech;
     $("detailBtn").setAttribute("aria-pressed", String(showTech));
     $("detailBtn").textContent = showTech ? "Hide details" : "Show details";
+  });
+
+  /* ============================================================
+     PREDICTED FOR YOU — the classifier speaking unprompted
+     ============================================================ */
+  const KIND_PHRASE = {
+    "movie":"a film", "game":"a game", "song":"music", "event":"an event",
+    "theme park":"a theme park", "restaurant":"somewhere to eat",
+    "cafe":"a cafe", "travel place":"somewhere to go",
+    "shopping center":"a shopping trip", "bazaar":"a market"
+  };
+
+  function staticPredict(){
+    /* No LightGBM in the browser, so the prediction is the majority kind
+       across everything liked so far, with the share as its confidence.
+       Labelled honestly on screen as a count, not as the classifier. */
+    const signal = [profile.taste || "", Array.from(liked).join(" ")].join(" ").trim();
+    const tally = {};
+    data.items.forEach(function(it){
+      if(liked.has(it.title.toLowerCase())) tally[it.kind] = (tally[it.kind] || 0) + 1;
+    });
+    let kind = null, best = 0, total = 0;
+    Object.keys(tally).forEach(function(k){ total += tally[k]; if(tally[k] > best){ best = tally[k]; kind = k; } });
+    if(!kind && signal) kind = detectKind(signal, false);
+
+    const res = staticEngine(signal || "something to do", "optio", 14);
+    let items = res.items;
+    if(kind){
+      const of = items.filter(function(i){ return i.kind === kind; });
+      if(of.length) items = of;
+    }
+    return {
+      predicted_kind: kind,
+      confidence: total ? best / total : null,
+      source: total ? "majority of what you liked" : "not enough signal yet",
+      liked_count: total,
+      items: items.slice(0, 5)
+    };
+  }
+
+  function renderPredicted(p){
+    if(!p || !p.items || !p.items.length){
+      $("predList").innerHTML = '<div class="empty">Like a few things first — '
+        + 'the prediction needs something to read.</div>';
+      $("predKind").textContent = "—";
+      $("predConf").textContent = "—";
+      $("predMeter").style.setProperty("--w", "0%");
+      $("predNote").textContent = "Optio predicts what you'll want next from everything "
+        + "you've told it. Nothing to go on yet.";
+      $("predSource").textContent = "—";
+      $("predSub").textContent = "—";
+      return;
+    }
+    const pct = p.confidence == null ? null : Math.round(p.confidence * 100);
+    $("predKind").textContent = p.predicted_kind
+      ? (KIND_PHRASE[p.predicted_kind] || p.predicted_kind) : "not sure yet";
+    $("predConf").textContent = pct == null ? "no confidence yet" : pct + "% sure";
+    $("predMeter").style.setProperty("--w", (pct || 0) + "%");
+    $("predSource").textContent = p.source || "—";
+    $("predNote").textContent = p.liked_count
+      ? "Read from " + p.liked_count + " thing" + (p.liked_count === 1 ? "" : "s")
+        + " you liked, plus what you said your taste was."
+      : "Based on your stated taste alone — like a few things and this sharpens up.";
+    $("predSub").textContent = "Nobody asked for this — it's what Optio thinks is next.";
+
+    $("predList").innerHTML = p.items.map(function(it, i){
+      const kc = KIND_COLOR[it.kind] || "var(--text-3)";
+      return '<article class="pred-item" data-id="' + esc(it.item_id) + '" style="--kc:' + kc + '">'
+        + '<span class="pred-rank">' + (i+1) + '</span>'
+        + '<span><span class="pred-t">' + esc(it.title) + '</span>'
+        + '<span class="pred-m"><i class="kd" style="--kc:' + kc + '"></i>' + esc(it.kind)
+        + (it.location ? ' · ' + esc(it.location) : '') + '</span></span>'
+        + '<span class="pred-pct">' + it.match + '%</span></article>';
+    }).join("");
+    predItems = p.items;
+  }
+
+  let predItems = [];
+  $("predList").addEventListener("click", function(e){
+    const card = e.target.closest(".pred-item");
+    if(!card) return;
+    const it = predItems.filter(function(x){ return x.item_id === card.dataset.id; })[0];
+    if(!it) return;
+    selected = it; renderWhy();
+    $("whyTitle").scrollIntoView({behavior:"smooth", block:"start"});
+  });
+
+  async function loadPredicted(){
+    try{
+      renderPredicted(LIVE ? await api("/api/predicted") : staticPredict());
+    }catch(err){
+      if(err.status === 401){ location.href = LOGIN_URL(); return; }
+      renderPredicted(null);
+    }
+  }
+  $("predRefresh").addEventListener("click", function(){
+    loadPredicted();
+    toast("Re-read your likes and predicted again.");
+  });
+
+  /* ============================================================
+     LINEUP — an evening in order
+     ============================================================ */
+  const SLOTS = [
+    {slot:"First", when:"early evening", kinds:["restaurant","cafe"],                  note:"Somewhere to eat"},
+    {slot:"Then",  when:"out and about", kinds:["event","theme park","travel place"],  note:"Something happening"},
+    {slot:"After", when:"back home",     kinds:["movie"],                              note:"Something to watch"},
+    {slot:"Last",  when:"winding down",  kinds:["song","game"],                        note:"Something to end on"}
+  ];
+
+  function staticLineup(){
+    const taste = profile.taste || "something enjoyable";
+    const pool = staticEngine(taste, "optio", 400).items;
+    const used = {};
+    return SLOTS.map(function(s){
+      const pick = pool.filter(function(i){
+        return s.kinds.indexOf(i.kind) >= 0 && !used[i.item_id];
+      })[0] || null;
+      if(pick) used[pick.item_id] = 1;
+      return Object.assign({}, s, {item:pick});
+    });
+  }
+
+  let lineItems = [];
+  function renderLineup(rows, basedOn){
+    lineItems = rows.map(function(r){ return r.item; }).filter(Boolean);
+    $("lineup").innerHTML = rows.map(function(r){
+      const it = r.item;
+      const kc = it ? (KIND_COLOR[it.kind] || "var(--text-3)") : "var(--line)";
+      return '<section class="slot">'
+        + '<header class="slot-head"><span class="slot-n">' + esc(r.slot) + '</span>'
+        + '<span class="slot-when">' + esc(r.when) + '</span></header>'
+        + (it
+            ? '<div class="slot-body" data-id="' + esc(it.item_id) + '">'
+              + '<span class="slot-note">' + esc(r.note) + '</span>'
+              + '<span class="slot-t">' + esc(it.title) + '</span>'
+              + '<span class="slot-m"><i class="kd" style="--kc:' + kc + '"></i>' + esc(it.kind)
+              + '<span class="slot-pct">' + it.match + '%</span></span></div>'
+            : '<div class="slot-empty">' + esc(r.note)
+              + ' — nothing in the catalogue fits this slot yet.</div>')
+        + '</section>';
+    }).join("");
+    $("lineSub").textContent = "Built from your taste: " + (basedOn || profile.taste || "—")
+      + " · the catalogue has no showtimes, so this is an order, not a schedule.";
+  }
+
+  $("lineup").addEventListener("click", function(e){
+    const body = e.target.closest(".slot-body");
+    if(!body) return;
+    const it = lineItems.filter(function(x){ return x.item_id === body.dataset.id; })[0];
+    if(!it) return;
+    selected = it; renderWhy();
+    $("whyTitle").scrollIntoView({behavior:"smooth", block:"start"});
+  });
+
+  async function loadLineup(){
+    try{
+      if(LIVE){
+        const r = await api("/api/lineup");
+        renderLineup(r.lineup, r.based_on);
+      }else{
+        renderLineup(staticLineup(), profile.taste);
+      }
+    }catch(err){
+      if(err.status === 401){ location.href = LOGIN_URL(); return; }
+      renderLineup(SLOTS.map(function(s){ return Object.assign({}, s, {item:null}); }), null);
+    }
+  }
+  $("lineRefresh").addEventListener("click", function(){
+    loadLineup();
+    toast("Rebuilt your evening.");
   });
 
   /* ============================================================
@@ -747,10 +928,47 @@
        + "built the models. The <b>About</b> button in the header has the full tour."},
     {ask:/reset|start over|clear/i,
      say:"Ask Optio to <i>start over</i>, or sign out and back in. Your saved likes stay with "
-       + "your account either way."}
+       + "your account either way."},
+    {ask:/what is|what'?s (this|optio)|about|purpose|explain the site|how does this work/i,
+     say:"Optio is an <b>AI Entertainment Decision System</b>. Tell it what you feel like and two "
+       + "different models answer at once — you pick whichever read you better, and that choice "
+       + "trains it. The catalogue is 36,016 films, games, songs, events and places."},
+    {ask:/predict|lineup|line ?up|evening|next/i,
+     say:"<b>Predicted for you</b> is the LightGBM classifier guessing what kind of thing you'll "
+       + "want next, from your taste and everything you've liked — no request needed. "
+       + "<b>Your evening lineup</b> puts one pick in each slot: eat, go out, watch, wind down. "
+       + "Both are at the bottom of the page."},
+    {ask:/catalog|dataset|how many|data ?set|where.*(from|come)/i,
+     say:"36,016 items built from five public sources: MovieLens, the Free Music Archive, Spotify "
+       + "song metadata, Fáilte Ireland open data and ThemeParks.wiki. Ten kinds in all — films, "
+       + "games, songs, events, parks, restaurants, cafes, travel places, shopping centres, markets."},
+    {ask:/language|persian|farsi|arabic|french|فارسی|عربی/i,
+     say:"The recommender understands English, French, Farsi and Arabic — just write in one of "
+       + "them and it follows. The interface itself is in English."},
+    {ask:/like|dislike|feedback|thumbs|rate/i,
+     say:"Use <b>Yes, more like this</b> or <b>Not for me</b> under any suggestion. A like pulls "
+       + "similar things up; a dislike subtracts 0.35 from that title's score, so it drops away. "
+       + "Both are saved to your account."},
+    {ask:/error|broken|fail|bug|not load|doesn'?t work|404/i,
+     say:"If the models show as not loaded, the usual cause is the Python version: the saved "
+       + "models need Python 3.12 and NumPy 2.x. Try <code>py -3.12 -m pip install -r "
+       + "requirements.txt</code> then <code>py -3.12 app.py</code>. If a page 404s, open the site "
+       + "root rather than a sub-path."},
+    {ask:/popup|pop ?up|tour|welcome|intro/i,
+     say:"The welcome tour opens on your first visit. To see it again, press <b>About</b> in the "
+       + "header — it is the same panel."},
+    {ask:/chatbase|support|this chat|are you (a )?(bot|human|real)/i,
+     say:"I'm a small scripted helper built into the page — not a person, and not a language "
+       + "model. A full Chatbase agent can replace me by setting <code>CHATBASE_ID</code> in "
+       + "<code>assets/app.js</code>."},
+    {ask:/hello|hi\b|hey|salam|سلام|thanks|thank you/i,
+     say:"Hello. Ask me about the two models, how a score is built, signing in, the catalogue, "
+       + "or anything that looks broken."}
   ];
-  const HELP_FALLBACK = "I can help with signing in, how the two models differ, how scores are "
-    + "worked out, what gets stored, and running the server. Try asking about one of those.";
+  const HELP_FALLBACK = "I did not catch that one. I can explain: the two models and how they "
+    + "differ · how a score is worked out · Predicted for you and the evening lineup · signing in "
+    + "and what gets stored · the catalogue · why something is not loading. "
+    + "Ask about any of those and I'll have an answer.";
 
   function supportSay(who, html){
     const body = $("supportBody");
@@ -820,9 +1038,9 @@
     if(!LIVE){ toast("Accounts need the server. Run:  cd Optio  then  python app.py"); return; }
     if(me){
       await post("/api/logout", {}).catch(function(){});
-      location.href = "/login";
+      location.href = LOGIN_URL();
     }else{
-      location.href = "/login";
+      location.href = LOGIN_URL();
     }
   });
 
@@ -885,13 +1103,13 @@
           $("who").textContent = me.display_name;
           $("authBtn").textContent = "Sign out";
         }else{
-          location.href = "/login";
+          location.href = LOGIN_URL();
           return;
         }
-      }catch(e){ location.href = "/login"; return; }
+      }catch(e){ location.href = LOGIN_URL(); return; }
     }else{
       try{
-        data = await (await fetch("assets/catalog-sample.json")).json();
+        data = await (await fetch(url("assets/catalog-sample.json"))).json();
       }catch(e){
         document.querySelector(".shell").innerHTML =
           '<div class="empty" style="margin-top:40px">Could not load the catalogue sample.</div>';
@@ -902,6 +1120,7 @@
     setStatus();
     setupSupport();
     renderProfile(); renderDuel(); renderWhy(); renderHints();
+    loadPredicted(); loadLineup();
 
     let showTour = false;
     try{

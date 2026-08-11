@@ -60,7 +60,7 @@
       const body = {username: username, password: password};
       if(mode === "register") body.display_name = $("displayName").value.trim() || username;
 
-      const r = await fetch("/api/" + mode, {
+      const r = await fetch(BASE + "api/" + mode, {
         method:"POST",
         headers:{"Content-Type":"application/json"},
         credentials:"include",
@@ -74,21 +74,43 @@
         return;
       }
       if(data.first_time) sessionStorage.setItem("optio-welcome", "1");
-      location.href = "/";
+      location.href = BASE + "index.html";
     }catch(err){
       showError("No server is answering. Start it with:  cd Optio  then  python app.py");
       btn.disabled = false; btn.textContent = original;
     }
   });
 
-  /* already signed in? go straight through */
+  /* Already signed in? Go straight through.
+
+     If nothing answers, this is the hosted preview: GitHub Pages serves
+     files, it cannot run Python, so there is no database to hold an
+     account. Rather than leave a live-looking form that can never succeed,
+     the page says so and offers the way in that does work. */
   (async function(){
     try{
-      const r = await fetch("/api/me", {credentials:"include"});
+      const r = await fetch(BASE + "api/me", {credentials:"include"});
       const me = await r.json();
-      if(me.signed_in) location.href = "/";
+      if(me.signed_in){ location.href = BASE + "index.html"; return; }
     }catch(e){
-      showError("No server is answering yet. Start it with:  cd Optio  then  python app.py");
+      offlineNotice();
     }
   })();
+
+  function offlineNotice(){
+    document.getElementById("authForm").hidden = true;
+    document.querySelector(".auth-tabs").hidden = true;
+    const note = document.getElementById("authNote");
+    note.classList.add("auth-offline");
+    note.innerHTML =
+        "<b>This is the hosted preview — accounts need the server.</b>"
+      + "<p>GitHub Pages can serve files but cannot run Python, so there is no database "
+      + "here to keep an account in. Everything else works: the catalogue, both models, "
+      + "the comparison and the explanations.</p>"
+      + '<a class="btn btn-primary auth-submit" href="' + BASE + 'index.html">'
+      + 'Continue to the preview</a>'
+      + "<p class='auth-runit'>To get accounts, the trained classifiers and saved history, "
+      + "run it locally:<br><code>cd Optio</code><br><code>pip install -r requirements.txt</code><br>"
+      + "<code>python app.py</code></p>";
+  }
 })();

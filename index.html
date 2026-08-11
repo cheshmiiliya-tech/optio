@@ -144,6 +144,46 @@
       </div>
     </section>
 
+    <!-- ============ PREDICTED FOR YOU ============ -->
+    <section class="section" aria-labelledby="predTitle">
+      <div class="section-head">
+        <div>
+          <p class="prov prov-model"><i></i>LightGBM classifier · unprompted</p>
+          <h2 class="section-title" id="predTitle">Predicted for you</h2>
+          <p class="section-sub" id="predSub">—</p>
+        </div>
+        <button class="btn btn-sm" id="predRefresh">Predict again</button>
+      </div>
+
+      <div class="pred-wrap">
+        <aside class="panel pred-call">
+          <div class="panel-head"><h3>Next you'll want</h3><span class="mono" id="predSource">—</span></div>
+          <div class="pred-body">
+            <div class="pred-kind" id="predKind">—</div>
+            <div class="pred-conf">
+              <span class="meter" aria-hidden="true"><i id="predMeter" style="--w:0%"></i></span>
+              <span class="mono" id="predConf">—</span>
+            </div>
+            <p class="pred-note" id="predNote">—</p>
+          </div>
+        </aside>
+        <div class="pred-list" id="predList"></div>
+      </div>
+    </section>
+
+    <!-- ============ LINEUP ============ -->
+    <section class="section" aria-labelledby="lineTitle">
+      <div class="section-head">
+        <div>
+          <p class="prov prov-model"><i></i>A running order, not a schedule</p>
+          <h2 class="section-title" id="lineTitle">Your evening lineup</h2>
+          <p class="section-sub" id="lineSub">—</p>
+        </div>
+        <button class="btn btn-sm" id="lineRefresh">Rebuild</button>
+      </div>
+      <div class="lineup" id="lineup"></div>
+    </section>
+
     <footer class="foot">
       <span id="footLeft">Optio — AI Entertainment Decision System.</span>
       <span class="mono" id="footRight">—</span>

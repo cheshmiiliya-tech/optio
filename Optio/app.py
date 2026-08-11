@@ -345,6 +345,128 @@ def feedback(body: Feedback, optio_session: Optional[str] = Cookie(default=None)
     return {"ok": True, "prefs": db.get_prefs(user["id"])}
 
 
+@app.get("/api/predicted")
+def predicted(optio_session: Optional[str] = Cookie(default=None)):
+    """What Optio thinks you will want next, without being asked.
+
+    This is the one place the LightGBM classifier is used for its own sake
+    rather than to route a request. It reads everything the account has told
+    us - the stated taste, plus the titles and tags of everything liked so
+    far - and predicts which KIND of thing is wanted next. The shortlist is
+    then the best of that kind.
+
+    The prediction and its confidence are both returned, because a 41% guess
+    and a 96% guess should not look the same on screen.
+    """
+    user, error = need_user(optio_session)
+    if error:
+        return error
+    if dual is None or not dual.any_ready:
+        return JSONResponse({"error": "No recommender is loaded."}, status_code=503)
+
+    apply_user_context(user)
+    engine = dual.optio if dual.optio.ready else dual.primary
+    bot = engine.bot
+    prefs = db.get_prefs(user["id"])
+
+    signal = " ".join(filter(None, [
+        bot.profile.get("taste") or "",
+        " ".join(p["title"] for p in prefs["liked"][:12]),
+        " ".join(p.get("request") or "" for p in prefs["liked"][:12]),
+    ])).strip()
+
+    predicted_kind, confidence, source = None, None, "not enough signal yet"
+    if signal:
+        if engine.classifier_loaded:
+            try:
+                vector = bot.classifier_vectorizer.transform([signal])
+                probabilities = bot.category_model.predict_proba(vector)[0]
+                index = int(probabilities.argmax())
+                predicted_kind = str(bot.label_encoder.inverse_transform([index])[0])
+                confidence = round(float(probabilities[index]), 4)
+                source = "LightGBM classifier"
+            except Exception:
+                predicted_kind = None
+        if predicted_kind is None:
+            predicted_kind = bot._detect_kind(signal)
+            source = "keyword rules (classifier unavailable)"
+
+        # Keyword rules return nothing when two kinds tie - "funny movies and
+        # co-op games" names both. Fall back to the majority kind of what the
+        # account has actually liked, which is a weaker signal but an honest
+        # one, and label it as such rather than leaving the panel blank.
+        if predicted_kind is None and prefs["liked"]:
+            counts = {}
+            for pref in prefs["liked"]:
+                kind = (pref.get("kind") or "").strip()
+                if kind:
+                    counts[kind] = counts.get(kind, 0) + 1
+            if counts:
+                predicted_kind = max(counts, key=counts.get)
+                confidence = round(counts[predicted_kind] / sum(counts.values()), 4)
+                source = "majority of what you liked"
+
+    items = dual.score_items(engine, signal or "something to do", count=12,
+                             disliked=disliked_titles(user["id"]))
+    if predicted_kind:
+        of_kind = [i for i in items if i["kind"] == predicted_kind]
+        if of_kind:
+            items = of_kind
+    items = items[:5]
+
+    db.log(user["id"], "predicted", {"kind": predicted_kind, "confidence": confidence})
+    return {
+        "predicted_kind": predicted_kind,
+        "confidence": confidence,
+        "source": source,
+        "signal_used": signal[:220],
+        "liked_count": len(prefs["liked"]),
+        "items": items,
+    }
+
+
+@app.get("/api/lineup")
+def lineup(optio_session: Optional[str] = Cookie(default=None)):
+    """An evening in order: eat, then do, then watch, then wind down.
+
+    The catalogue carries no broadcast times - nothing here has a start or a
+    duration - so this is a running order rather than a schedule. Each slot
+    takes the best-scoring item of its kinds that has not already been used.
+    """
+    user, error = need_user(optio_session)
+    if error:
+        return error
+    if dual is None or not dual.any_ready:
+        return JSONResponse({"error": "No recommender is loaded."}, status_code=503)
+
+    apply_user_context(user)
+    engine = dual.primary
+    taste = engine.bot.profile.get("taste") or "something enjoyable"
+
+    slots = [
+        {"slot": "First", "when": "early evening", "kinds": ["restaurant", "cafe"],
+         "note": "Somewhere to eat"},
+        {"slot": "Then", "when": "out and about", "kinds": ["event", "theme park", "travel place"],
+         "note": "Something happening"},
+        {"slot": "After", "when": "back home", "kinds": ["movie"], "note": "Something to watch"},
+        {"slot": "Last", "when": "winding down", "kinds": ["song", "game"],
+         "note": "Something to end on"},
+    ]
+
+    pool = dual.score_items(engine, taste, count=250,
+                            disliked=disliked_titles(user["id"]))
+    used, out = set(), []
+    for slot in slots:
+        pick = next((i for i in pool
+                     if i["kind"] in slot["kinds"] and i["item_id"] not in used), None)
+        if pick:
+            used.add(pick["item_id"])
+        out.append({**slot, "item": pick})
+
+    db.log(user["id"], "lineup", {})
+    return {"lineup": out, "based_on": taste}
+
+
 @app.post("/api/reset")
 def reset(optio_session: Optional[str] = Cookie(default=None)):
     user, error = need_user(optio_session)
