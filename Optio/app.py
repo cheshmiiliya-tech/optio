@@ -495,12 +495,21 @@ def greeting(optio_session: Optional[str] = Cookie(default=None)):
 # the UI
 # --------------------------------------------------------------------------
 
+# The front end uses relative paths, because on GitHub Pages the site is
+# served from /optio/ and a leading slash escapes to the domain root. That
+# means it asks for "index.html" and "login.html" - real filenames, which
+# Pages serves directly. Here they have to be routed explicitly, and the
+# extensionless spellings kept working too, so the same links resolve
+# whether the page came from this server or from Pages.
+
 @app.get("/")
+@app.get("/index.html")
 def home():
     return FileResponse(UI_DIR / "index.html")
 
 
 @app.get("/login")
+@app.get("/login.html")
 def login_page():
     return FileResponse(UI_DIR / "login.html")
 
