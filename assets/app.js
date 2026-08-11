@@ -104,12 +104,34 @@
     return String(t||"").toLowerCase().replace(/[^a-z0-9؀-ۿ\s]/g," ")
       .split(/\s+/).filter(function(x){ return x.length > 2; });
   }
-  function tfidf(tokens){
+  /* The two engines really are fitted with different vectorizer settings -
+     see SETTINGS in Optio/rebuild_indexes.py:
+
+        optio   min_df = 1                      keeps every term
+        deep    min_df = 2, max_df = 0.95       drops one-off and ubiquitous terms
+
+     That is what makes their shortlists diverge in the live system, so the
+     static build applies the same two vocabularies rather than inventing a
+     difference of its own. */
+  const VOCAB = {
+    optio: {minDf: 1,  maxDfRatio: 1.00},
+    deep:  {minDf: 2,  maxDfRatio: 0.95}
+  };
+  function inVocab(term, engineKey){
+    const df = data.df[term];
+    if(!df) return 0;
+    const rules = VOCAB[engineKey] || VOCAB.optio;
+    if(df < rules.minDf) return 0;
+    if(df > data.sample_total * rules.maxDfRatio) return 0;
+    return df;
+  }
+
+  function tfidf(tokens, engineKey){
     const N = data.sample_total, tf = {};
     tokens.forEach(function(t){ tf[t] = (tf[t]||0) + 1; });
     const v = {}; let norm = 0;
     Object.keys(tf).forEach(function(t){
-      const df = data.df[t];
+      const df = inVocab(t, engineKey);
       if(!df) return;
       const w = (1 + Math.log(tf[t])) * Math.log((1 + N) / (1 + df)) + 1;
       v[t] = w; norm += w*w;
@@ -119,9 +141,10 @@
     return v;
   }
   const vecCache = new Map();
-  function itemVec(it){
-    if(!vecCache.has(it.item_id)) vecCache.set(it.item_id, tfidf(it.tok));
-    return vecCache.get(it.item_id);
+  function itemVec(it, engineKey){
+    const key = engineKey + ":" + it.item_id;
+    if(!vecCache.has(key)) vecCache.set(key, tfidf(it.tok, engineKey));
+    return vecCache.get(key);
   }
   function cosine(a,b){
     let s = 0;
@@ -163,11 +186,11 @@
     const query = [profile.taste||"", request,
       data.companion_terms[companion]||"", data.color_terms[profile.color]||"",
       Array.from(liked).join(" ")].join(" ");
-    const qv = tfidf(tokenise(query));
+    const qv = tfidf(tokenise(query), engineKey);
     const kind = detectKind(request, engineKey === "optio");
 
     const scored = data.items.map(function(it){
-      const similarity = cosine(qv, itemVec(it));
+      const similarity = cosine(qv, itemVec(it, engineKey));
       const audience = (it.audience||"").indexOf(companion) >= 0 ? 1 : 0;
       const rej = rejected.has(it.title.toLowerCase()) ? 1 : 0;
       const score = W.similarity*similarity + W.quality*it.quality
@@ -685,16 +708,97 @@
     document.body.appendChild(s);
   }
 
+  /* Until an agent id is set, a small scripted helper answers the questions
+     this site actually gets asked. It is a real, working support panel - not
+     a placeholder - and it never claims to be a person. Chatbase replaces it
+     wholesale the moment CHATBASE_ID is filled in. */
+  const HELP = [
+    {ask:/sign|log ?in|account|register|password/i,
+     say:"Accounts live in the local database. Create one on the sign-in page — "
+       + "username and a password of at least six characters. Passwords are hashed, "
+       + "never stored as text. Accounts need the server running (<code>python app.py</code>)."},
+    {ask:/two|both|model|engine|differ|compare|which one/i,
+     say:"Two recommenders answer every request. <b>Optio</b> is gradient boosting; "
+       + "<b>Deep Learning</b> is a three-layer neural network. They search with different "
+       + "vocabularies, so they often shortlist different things. Pick whichever read you "
+       + "better — that choice is saved and shapes what you see next."},
+    /* Ordering matters: the rules are tried top to bottom and the first match
+       wins, so narrow symptoms go above broad topics. "why is it so slow"
+       has to reach the speed rule before the word "why" hands it to the
+       scoring rule. */
+    {ask:/slow|loading|stuck|hang|freeze|taking (so )?long/i,
+     say:"First start is slow: the catalogue is 36,016 items and both engines build a search "
+       + "index. After that it is quick. If it never finishes, check the terminal running "
+       + "<code>python app.py</code>."},
+    {ask:/score|match|percent|%|why|reason|how does it/i,
+     say:"Every score is <code>0.78·similarity + 0.22·quality + 0.08·audience − 0.35·rejected</code>. "
+       + "The <b>Why this one?</b> panel breaks it down in plain words, and <b>Show details</b> "
+       + "in the header reveals the raw numbers."},
+    {ask:/static|demo|github|pages|offline|not work/i,
+     say:"The hosted preview has no Python behind it, so it runs on a 540-item slice of the real "
+       + "catalogue with the same scoring formula. Sign-in, the trained classifiers and saved "
+       + "history all need the server. Run <code>cd Optio</code> then <code>python app.py</code>."},
+    {ask:/data|privacy|store|save|track/i,
+     say:"Everything stays on the machine running the server, in "
+       + "<code>Optio/data/optio.db</code>: your account, when you signed in and out, what you "
+       + "liked, and which engine you preferred. Nothing is sent anywhere else."},
+    {ask:/who|made|team|built|author|credit/i,
+     say:"Iliya Cheshmi and Reza Shahbazi built the interface; Hosna Zandavi and Radin Jalab "
+       + "built the models. The <b>About</b> button in the header has the full tour."},
+    {ask:/reset|start over|clear/i,
+     say:"Ask Optio to <i>start over</i>, or sign out and back in. Your saved likes stay with "
+       + "your account either way."}
+  ];
+  const HELP_FALLBACK = "I can help with signing in, how the two models differ, how scores are "
+    + "worked out, what gets stored, and running the server. Try asking about one of those.";
+
+  function supportSay(who, html){
+    const body = $("supportBody");
+    const el = document.createElement("div");
+    el.className = "sup-msg sup-" + who;
+    el.innerHTML = html;
+    body.appendChild(el);
+    body.scrollTop = body.scrollHeight;
+  }
+
+  function supportAnswer(text){
+    for(const rule of HELP){ if(rule.ask.test(text)) return rule.say; }
+    return HELP_FALLBACK;
+  }
+
   function setupSupport(){
     if(CHATBASE_ID){ mountChatbase(CHATBASE_ID); return; }
     $("supportBody").innerHTML =
-        "<p><b>Hi — how can we help?</b></p>"
-      + "<p>The live support agent is not connected yet. To switch it on:</p>"
-      + "<ol><li>Create an agent at <code>chatbase.co</code></li>"
-      + "<li>Copy its agent id</li>"
-      + "<li>Paste it into <code>CHATBASE_ID</code> near the bottom of "
-      + "<code>assets/app.js</code></li></ol>"
-      + "<p>The real widget replaces this panel automatically once the id is set.</p>";
+        '<div class="sup-msg sup-bot"><b>Hi — how can I help?</b><br>'
+      + 'Ask about signing in, the two models, how scores work, or running the server.</div>'
+      + '<div class="sup-chips">'
+      + ['How do the two models differ?','How is the score worked out?','What do you store?','Who built this?']
+          .map(function(q){ return '<button class="sup-chip" type="button">' + esc(q) + '</button>'; }).join("")
+      + '</div>';
+
+    const form = document.createElement("form");
+    form.className = "sup-bar";
+    form.innerHTML = '<input class="sup-input" id="supInput" placeholder="Type a question…" aria-label="Ask support">'
+                   + '<button class="btn btn-sm btn-primary" type="submit">Ask</button>';
+    $("supportPanel").appendChild(form);
+
+    form.addEventListener("submit", function(e){
+      e.preventDefault();
+      const input = $("supInput");
+      const q = input.value.trim();
+      if(!q) return;
+      input.value = "";
+      supportSay("you", esc(q));
+      setTimeout(function(){ supportSay("bot", supportAnswer(q)); }, 260);
+    });
+
+    $("supportBody").addEventListener("click", function(e){
+      const chip = e.target.closest(".sup-chip");
+      if(!chip) return;
+      const q = chip.textContent;
+      supportSay("you", esc(q));
+      setTimeout(function(){ supportSay("bot", supportAnswer(q)); }, 260);
+    });
   }
 
   $("supportFab").addEventListener("click", function(){

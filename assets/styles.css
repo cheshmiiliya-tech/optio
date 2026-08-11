@@ -579,15 +579,42 @@ ul,ol{margin:0;padding:0;list-style:none}
   padding:0 4px;opacity:.85;
 }
 .support-x:hover{opacity:1}
-.support-body{padding:16px;font-size:13.5px;line-height:1.6;color:var(--text-2)}
-.support-body p{margin:0 0 12px}
+.support-body{
+  padding:14px;font-size:13px;line-height:1.55;color:var(--text-2);
+  max-height:340px;overflow-y:auto;display:flex;flex-direction:column;gap:9px;
+}
 .support-body b{color:var(--text)}
 .support-body code{
-  font-family:var(--font-mono);font-size:11.5px;background:var(--panel-2);
+  font-family:var(--font-mono);font-size:11px;background:var(--panel-2);
   border:1px solid var(--line-soft);border-radius:3px;padding:1px 5px;color:var(--text);
-  word-break:break-all;
+  word-break:break-word;
 }
-.support-body ol{padding-left:18px;list-style:decimal;display:flex;flex-direction:column;gap:7px;margin:0 0 12px}
+.sup-msg{padding:9px 12px;border-radius:9px;max-width:92%}
+.sup-bot{
+  background:var(--panel-2);border:1px solid var(--line-soft);
+  border-bottom-left-radius:3px;align-self:flex-start;
+}
+.sup-you{
+  background:color-mix(in srgb,var(--accent) 13%,transparent);
+  border:1px solid color-mix(in srgb,var(--accent) 26%,transparent);
+  border-bottom-right-radius:3px;align-self:flex-end;color:var(--text);
+}
+.sup-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:2px}
+.sup-chip{
+  font-size:11.5px;font-weight:600;padding:5px 10px;border-radius:99px;cursor:pointer;
+  border:1px dashed var(--line);background:transparent;color:var(--text-2);
+  transition:border-color .15s,color .15s,border-style .15s;
+}
+.sup-chip:hover{color:var(--signal);border-color:var(--signal);border-style:solid}
+.sup-bar{
+  display:flex;gap:8px;padding:12px 14px;border-top:1px solid var(--line-soft);
+  background:var(--panel-2);
+}
+.sup-input{
+  flex:1;min-width:0;border:1px solid var(--line);border-radius:5px;background:var(--panel);
+  padding:8px 11px;font-size:13px;color:var(--text);
+}
+.sup-input::placeholder{color:var(--text-3)}
 
 /* ============================================================
    AUTH PAGE
