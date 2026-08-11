@@ -87,22 +87,69 @@ def disliked_titles(user_id):
     return {p["title"].lower() for p in prefs["disliked"]}
 
 
-def apply_user_context(user: dict) -> None:
-    """Push the account's saved profile into both bots before answering.
+PROFILE_FIELDS = ["name", "taste", "companion", "country", "city", "color"]
 
-    Each engine keeps its own conversation object, so the same stored profile
-    is written into both. That keeps the A/B comparison fair: any difference
-    in the two shortlists comes from the classifiers, not from one engine
-    knowing more about the user than the other.
+
+def apply_user_context(user: dict) -> None:
+    """Load this account's profile into both bots, and nothing else.
+
+    Both engines are process-wide singletons shared by every request, so a
+    profile left behind by the previous caller would otherwise still be
+    sitting there. Every field is cleared and then repopulated from this
+    account, so one person's answers can never leak into another's session.
+
+    Both bots get the same profile, which keeps the A/B comparison fair: a
+    difference in the two shortlists is a difference in the classifiers, not
+    one engine knowing more about the user than the other.
     """
-    stored = db.load_profile(user["id"])
-    if not stored:
-        return
+    stored = db.load_profile(user["id"]) or {}
     for engine in dual.engines():
-        if engine.ready:
-            for key, value in stored.items():
-                if key in engine.bot.profile:
-                    engine.bot.profile[key] = value
+        if not engine.ready:
+            continue
+        for key in PROFILE_FIELDS:
+            engine.bot.profile[key] = stored.get(key) or None
+        # conversational latches belong to whoever was last talking
+        engine.bot.waiting_for_feedback = False
+        engine.bot.waiting_to_explore = False
+
+
+def next_missing_field(profile: dict):
+    for key in PROFILE_FIELDS:
+        if not profile.get(key):
+            return key
+    return None
+
+
+PROFILE_QUESTIONS = {
+    "name": "What name should I call you?",
+    "taste": "What movies, songs, games, events, or places do you enjoy?",
+    "companion": "Will you go Alone, with Friends, or with Family?",
+    "country": "Which country do you live in?",
+    "city": "Which city do you live in?",
+    "color": "What is your favourite colour?",
+}
+
+
+def capture_field(bot, field: str, text: str):
+    """Read one answer. Returns the value, or None if it did not parse.
+
+    chatbot.py routes any message that merely looks like a content request
+    into its direct-answer path, which abandons the questionnaire: answering
+    "comedy films" to "what do you enjoy?" was being swallowed, and the next
+    answer landed in the wrong field. While the profile is still being
+    collected, the six answers are read here instead, so a question that was
+    asked is always the question that gets answered.
+    """
+    text = (text or "").strip()
+    if not text:
+        return None
+    if field == "name":
+        return bot._name_from_text(text) or (text.split()[0].title() if len(text.split()) <= 2 else None)
+    if field == "companion":
+        return bot._companion_from_text(text)
+    if field == "color":
+        return bot._color_from_text(text)
+    return text          # taste, country, city are free text
 
 
 def sync_profile_to_db(user_id: int) -> dict:
@@ -264,28 +311,61 @@ def chat(body: Message, optio_session: Optional[str] = Cookie(default=None)):
 
     apply_user_context(user)
     engine = dual.primary
-    result = engine.bot.reply(body.message)
-    profile = sync_profile_to_db(user["id"])
     db.log(user["id"], "message", {"text": body.message[:200]})
 
-    payload = {
+    stored = db.load_profile(user["id"]) or {}
+    field = next_missing_field(stored)
+
+    # --- still collecting the six answers: drive it here, deterministically
+    if field:
+        value = capture_field(engine.bot, field, body.message)
+        if value is None:
+            return {
+                "text": "Sorry, I did not catch that. " + PROFILE_QUESTIONS[field],
+                "profile": stored,
+                "profile_complete": False,
+                "next_question": PROFILE_QUESTIONS[field],
+                "compare": None,
+            }
+
+        stored[field] = value
+        db.save_profile(user["id"], stored)
+        for e in dual.engines():
+            if e.ready:
+                e.bot.profile[field] = value
+
+        nxt = next_missing_field(stored)
+        lead = {
+            "name": f"Nice to meet you, {value}.",
+            "taste": "Good to know.",
+            "companion": f"Got it - {value}.",
+            "country": "Thanks.",
+            "city": "That helps with nearby ideas.",
+            "color": f"{str(value).title()} it is.",
+        }[field]
+        return {
+            "text": lead + " " + (PROFILE_QUESTIONS[nxt] if nxt
+                                  else "That is everything. What are you in the mood for?"),
+            "profile": stored,
+            "profile_complete": nxt is None,
+            "next_question": PROFILE_QUESTIONS[nxt] if nxt else None,
+            "compare": None,
+        }
+
+    # --- profile complete: it is a real request, so both engines answer
+    result = engine.bot.reply(body.message)
+    profile = sync_profile_to_db(user["id"])
+    db.log(user["id"], "request", {"text": body.message[:200]})
+
+    return {
         "text": result.get("text", ""),
         "profile": profile,
-        "profile_complete": result.get("profile_complete", False),
-        "next_question": engine.bot._next_question(),
+        "profile_complete": True,
+        "next_question": None,
         "detected_kind": result.get("detected_kind"),
-        "compare": None,
+        "request": body.message,
+        "compare": dual.compare(body.message, count=4, disliked=disliked_titles(user["id"])),
     }
-
-    # Once the profile is filled in, a real request goes to both engines so
-    # the user can judge them against each other.
-    if result.get("profile_complete") and result.get("recommendations"):
-        db.log(user["id"], "request", {"text": body.message[:200]})
-        payload["compare"] = dual.compare(
-            body.message, count=4, disliked=disliked_titles(user["id"])
-        )
-        payload["request"] = body.message
-    return payload
 
 
 @app.post("/api/compare")

@@ -391,7 +391,11 @@
   }
   $("chatHints").addEventListener("click", function(e){
     const b = e.target.closest(".hint");
-    if(b) send(b.textContent);
+    if(!b) return;
+    const box = $("chatInput");
+    box.value = b.textContent;      // put it in the box; the user presses Send
+    box.focus();
+    box.setSelectionRange(box.value.length, box.value.length);
   });
 
   /* ============================================================
@@ -517,15 +521,31 @@
       }catch(err){
         if(err.status === 401){ location.href = LOGIN_URL(); return; }
         toast("Could not save that choice.");
+        return;
       }
     }else{
       scoreboard[winner] = (scoreboard[winner] || 0) + 1;
       if(winner !== "neither"){
         (duel[winner].items || []).slice(0,2).forEach(function(it){ liked.add(it.title.toLowerCase()); });
       }
-      toast(winner === "neither" ? "Noted." : "Saved in this browser session.");
     }
+
+    /* The choice has to be seen to land. Name what it did, show the top of
+       the winning list in the explanation panel, and re-read the prediction
+       it just fed - otherwise pressing the button looks like nothing. */
     renderScoreboard();
+    if(winner === "neither"){
+      $("duelSub").textContent = "Noted - neither shortlist landed. Nothing was added to your likes.";
+      toast("Noted. Neither list counted towards either model.");
+    }else{
+      const won = duel[winner];
+      const kept = (won.items || []).slice(0,2).map(function(i){ return i.title; });
+      $("duelSub").textContent = won.label + " won this round. Added to your likes: " + kept.join(", ")
+        + " - the next answer is scored with that already applied.";
+      if(won.items && won.items.length){ selected = won.items[0]; renderWhy(); }
+      toast(won.label + " wins. " + kept.length + " titles added to your likes.");
+    }
+    loadPredicted();
   });
 
   /* ============================================================
