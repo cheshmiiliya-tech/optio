@@ -15,6 +15,7 @@ param(
     [switch]$Setup,
     [switch]$Check,
     [switch]$Restart,
+    [switch]$Open,
     [int]$Port = 8000
 )
 
@@ -134,6 +135,7 @@ if ($busy) {
         Write-Host ""
         Write-Host "  ->  http://127.0.0.1:$Port" -ForegroundColor Cyan
         Write-Host ""
+        if ($Open) { Start-Process "http://127.0.0.1:$Port" }
         Write-Host "  Nothing to do. To restart it anyway:  .\run.ps1 -Restart" -ForegroundColor DarkGray
         Write-Host ""
         exit 0
@@ -169,7 +171,27 @@ Write-Host "  Starting with $($best.Label) ($($best.Info.Version))" -ForegroundC
 Write-Host "  First run builds a search index over 36,016 items - give it a minute." -ForegroundColor DarkGray
 Write-Host ""
 Write-Host "  ->  http://127.0.0.1:$Port" -ForegroundColor Cyan
-Write-Host "      Ctrl+C here stops it." -ForegroundColor DarkGray
+Write-Host "      Keep this window open. Ctrl+C stops the server." -ForegroundColor DarkGray
 Write-Host ""
+
+# The server blocks this thread once it starts, so the browser has to be
+# opened from somewhere else. Wait for the port to actually answer first -
+# opening too early just shows a connection error and teaches the user to
+# distrust the launcher.
+if ($Open) {
+    $waiter = @"
+for (`$i = 0; `$i -lt 90; `$i++) {
+    try {
+        Invoke-WebRequest 'http://127.0.0.1:$Port/api/status' -UseBasicParsing -TimeoutSec 3 | Out-Null
+        Start-Process 'http://127.0.0.1:$Port'
+        break
+    } catch { Start-Sleep -Seconds 2 }
+}
+"@
+    Start-Process powershell -WindowStyle Hidden `
+        -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", $waiter | Out-Null
+    Write-Host "  The browser will open by itself once it is ready." -ForegroundColor DarkGray
+    Write-Host ""
+}
 
 & $best.Exe app.py

@@ -13,10 +13,27 @@ public datasets.
 
 ## Run it
 
+**Double-click `START-OPTIO.bat`.** That is the whole instruction.
+
+It finds a working Python, installs anything missing the first time, frees
+port 8000 if a previous run is still holding it, starts the server, and opens
+the browser once it is actually answering. Keep the black window open — closing
+it stops the server.
+
+<details>
+<summary>If you would rather use the terminal</summary>
+
 ```powershell
 cd Optio
-.\run.ps1 -Setup      # installs the requirements, then starts
+.\run.ps1             # start
+.\run.ps1 -Setup      # install the requirements first, then start
+.\run.ps1 -Restart    # free port 8000 and start fresh
+.\run.ps1 -Check      # report what is installed and stop
 ```
+
+Note that Windows opens `.ps1` files in Notepad when you double-click them; it
+will not run them. That is why the `.bat` exists.
+</details>
 
 `run.ps1` picks the right interpreter, reports anything missing in plain
 words, and starts the server. Without it, running `app.py` against a Python
