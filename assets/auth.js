@@ -5,6 +5,12 @@
   "use strict";
 
   const $ = function(id){ return document.getElementById(id); };
+
+  /* Paths must be relative: on GitHub Pages the site lives under /optio/,
+     so a leading slash escapes to the domain root. BASE is the directory
+     this page was served from, with its trailing slash. */
+  const BASE = location.pathname.replace(/[^/]*$/, "");
+
   let mode = "login";
   let toastTimer = null;
 
