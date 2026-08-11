@@ -13,13 +13,21 @@ public datasets.
 
 ## Run it
 
-```bash
+```powershell
 cd Optio
-pip install -r requirements.txt
+.\run.ps1 -Setup      # installs the requirements, then starts
+```
 
+`run.ps1` picks the right interpreter, reports anything missing in plain
+words, and starts the server. Without it, running `app.py` against a Python
+that has no packages dies on the first import and the browser only says
+`ERR_CONNECTION_REFUSED`, which tells you nothing.
+
+Afterwards, `.\run.ps1` on its own is enough. To train from scratch:
+
+```powershell
 python train_optio.py     # builds the catalogue, trains the LightGBM classifier
 python train_deep.py      # trains the neural network on the same catalogue
-python app.py             # serves the UI, both models and the database
 ```
 
 Open <http://127.0.0.1:8000>. Create an account, and you are in.
@@ -101,7 +109,7 @@ assets/
   styles.css          design tokens, both themes, every component
   app.js              front end; live against app.py, or static fallback
   auth.js             sign in / register
-  catalog-sample.json 420 real catalogue rows for the static preview
+  catalog-sample.json 540 real catalogue rows for the static preview
 
 Optio/
   app.py              FastAPI: auth, both engines, SQLite, serves the UI
@@ -112,6 +120,7 @@ Optio/
   train_optio.py      LightGBM training
   train_deep.py       neural-network training
   rebuild_indexes.py  refit both search indexes against the catalogue
+  run.ps1             checks the interpreter, installs, and starts
 ```
 
 ### API
@@ -124,8 +133,32 @@ Optio/
 | `POST /api/compare` | the same request through **both** engines |
 | `POST /api/choose` | record which engine won |
 | `POST /api/feedback` | like / dislike one title |
+| `GET /api/predicted` | what you'll want next, from the LightGBM classifier |
+| `GET /api/lineup` | an evening in four slots |
 | `GET /api/status` | what loaded, what did not, and why |
 | `GET /api/docs` | interactive Swagger UI |
+
+### Predicted for you
+
+`GET /api/predicted` is the one place the LightGBM classifier speaks without
+being asked. It reads the stated taste plus the titles and requests behind
+every like, predicts which **kind** is wanted next, and returns that with a
+confidence — because a 41% guess and a 96% guess should not look alike.
+
+There are three levels of certainty, and the panel names whichever one it used:
+
+1. the trained classifier, when it loads;
+2. keyword rules, when it does not;
+3. the majority kind of everything liked, when the keywords tie — which they
+   do on a phrase like "funny movies and co-op games", since it names both.
+
+### Your evening lineup
+
+`GET /api/lineup` fills four slots — eat, go out, watch, wind down — each with
+the best-scoring item of its kinds that has not already been used. The catalogue
+carries no showtimes, no start times and no durations, so this is a running
+**order**, not a schedule, and the page says so rather than implying times it
+does not have.
 
 ---
 
@@ -138,9 +171,13 @@ The bottom-right button is wired for [Chatbase](https://www.chatbase.co). Open
 const CHATBASE_ID = "your-agent-id-here";
 ```
 
-The real widget then loads and replaces the placeholder panel. Until an id is
-set, the button opens a panel explaining exactly that rather than pretending to
-be a live agent.
+The real widget then loads and replaces the built-in panel.
+
+Until an id is set the button opens a small scripted helper that covers the
+questions this site actually gets — what Optio is, how the two models differ,
+how a score is built, the two sections above, the catalogue and its sources,
+supported languages, feedback, common errors, and the tour. It never claims to
+be a person and it is not a language model.
 
 ---
 
@@ -157,7 +194,7 @@ be a live agent.
   `rebuild_indexes.py` fixes it without a full retrain; `train_*.py` fixes it
   properly.
 - **The static preview cannot do accounts.** GitHub Pages has no Python, so the
-  hosted build runs on a 420-item slice with the same scoring formula and says
+  hosted build runs on a 540-item slice with the same scoring formula and says
   so on screen. Sign-in, the trained classifiers and saved history all need
   `app.py`.
 
