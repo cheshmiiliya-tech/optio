@@ -9,6 +9,10 @@ public datasets.
 
 **Static preview:** <https://cheshmiiliya-tech.github.io/optio/>
 
+> Reviewing this project? Start with **[README.txt](README.txt)** — the same
+> material as a single plain-text file, written to be read start to finish.
+> Licence: [MIT](LICENSE).
+
 ---
 
 ## Run it

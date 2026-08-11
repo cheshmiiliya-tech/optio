@@ -1,0 +1,52 @@
+MIT License
+
+Copyright (c) 2026 Iliya Cheshmi, Reza Shahbazi, Hosna Zandavi, Radin Jalab
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+-------------------------------------------------------------------------------
+
+THIRD-PARTY DATA
+
+The licence above covers the code in this repository. It does not cover the
+catalogue data, which is downloaded at build time from third parties and is
+not redistributed here. Each source keeps its own terms:
+
+  MovieLens (GroupLens Research)   https://grouplens.org/datasets/movielens/
+    Research use; not redistributed. See the README shipped in the download.
+
+  Free Music Archive metadata      https://github.com/mdeff/fma
+    Track metadata under the terms stated by that project.
+
+  Spotify song metadata            public dataset, per its publisher's terms
+
+  Failte Ireland Open Data         https://failteireland.ie/
+    Irish public sector open data.
+
+  ThemeParks.wiki                  https://themeparks.wiki/
+    Public API, per its published terms of use.
+
+Titles, ratings, descriptions and locations belong to their respective owners.
+They are used here for a non-commercial student project. Anyone reusing this
+code is responsible for meeting each source's terms for their own use.
+
+THIRD-PARTY LIBRARIES
+
+scikit-learn, LightGBM, pandas, NumPy, SciPy, FastAPI, uvicorn and joblib are
+used under their own licences and are not redistributed here.
