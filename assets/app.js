@@ -769,6 +769,7 @@
         + '<span class="pred-pct">' + it.match + '%</span></article>';
     }).join("");
     predItems = p.items;
+    lastPredSig = String(p.predicted_kind) + "|" + p.items.map(function(i){ return i.item_id; }).join(",");
   }
 
   let predItems = [];
@@ -789,9 +790,16 @@
       renderPredicted(null);
     }
   }
-  $("predRefresh").addEventListener("click", function(){
-    loadPredicted();
-    toast("Re-read your likes and predicted again.");
+  let lastPredSig = "";
+  $("predRefresh").addEventListener("click", async function(){
+    const b = $("predRefresh"), was = b.textContent;
+    b.disabled = true; b.textContent = "Reading…";
+    const before = lastPredSig;
+    await loadPredicted();
+    b.disabled = false; b.textContent = was;
+    toast(lastPredSig && lastPredSig === before
+      ? "Same prediction — nothing new to read. Like or reject something and it will move."
+      : "Re-read your likes. The prediction changed.");
   });
 
   /* ============================================================
@@ -836,6 +844,7 @@
               + ' — nothing in the catalogue fits this slot yet.</div>')
         + '</section>';
     }).join("");
+    lastLineSig = lineItems.map(function(i){ return i.item_id; }).join(",");
     $("lineSub").textContent = "Built from your taste: " + (basedOn || profile.taste || "—")
       + " · the catalogue has no showtimes, so this is an order, not a schedule.";
   }
@@ -862,9 +871,16 @@
       renderLineup(SLOTS.map(function(s){ return Object.assign({}, s, {item:null}); }), null);
     }
   }
-  $("lineRefresh").addEventListener("click", function(){
-    loadLineup();
-    toast("Rebuilt your evening.");
+  let lastLineSig = "";
+  $("lineRefresh").addEventListener("click", async function(){
+    const b = $("lineRefresh"), was = b.textContent;
+    b.disabled = true; b.textContent = "Building…";
+    const before = lastLineSig;
+    await loadLineup();
+    b.disabled = false; b.textContent = was;
+    toast(lastLineSig && lastLineSig === before
+      ? "Same evening — it is built from your taste, which has not changed."
+      : "Rebuilt your evening.");
   });
 
   /* ============================================================

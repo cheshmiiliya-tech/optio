@@ -353,18 +353,38 @@ def chat(body: Message, optio_session: Optional[str] = Cookie(default=None)):
         }
 
     # --- profile complete: it is a real request, so both engines answer
-    result = engine.bot.reply(body.message)
-    profile = sync_profile_to_db(user["id"])
+    #
+    # bot.reply() is deliberately not used here. Its conversational wrapper
+    # ends a recommendation with "Is there anything else you want to
+    # explore?" and latches waiting_to_explore, so the next message gets
+    # read as a yes/no answer instead of a new request. The shortlists come
+    # from dual.compare() either way, so the wrapper adds nothing but a
+    # question nobody asked.
     db.log(user["id"], "request", {"text": body.message[:200]})
+    comparison = dual.compare(body.message, count=4, disliked=disliked_titles(user["id"]))
+
+    counts = {k: len(v.get("items", [])) for k, v in comparison.items()}
+    total = sum(counts.values())
+    if total == 0:
+        text = ("I could not find anything for that. Try naming a kind - a film, a game, "
+                "music, an event - or describe the mood.")
+    else:
+        reads = {k: v.get("detected_kind") for k, v in comparison.items()}
+        if reads.get("optio") and reads["optio"] == reads.get("deep"):
+            text = (f"Both models read that as {reads['optio']}. Here is what each picked - "
+                    "tell me which shortlist suits you better.")
+        else:
+            text = ("The two models read that differently, so their shortlists differ. "
+                    "Have a look and tell me which one suits you better.")
 
     return {
-        "text": result.get("text", ""),
-        "profile": profile,
+        "text": text,
+        "profile": stored,
         "profile_complete": True,
         "next_question": None,
-        "detected_kind": result.get("detected_kind"),
+        "detected_kind": comparison.get("optio", {}).get("detected_kind"),
         "request": body.message,
-        "compare": dual.compare(body.message, count=4, disliked=disliked_titles(user["id"])),
+        "compare": comparison,
     }
 
 
@@ -533,12 +553,22 @@ def lineup(optio_session: Optional[str] = Cookie(default=None)):
          "note": "Something to end on"},
     ]
 
-    pool = dual.score_items(engine, taste, count=250,
-                            disliked=disliked_titles(user["id"]))
+    # One query per slot, seeded with that slot's own words. A single query
+    # on the stated taste is no good here: "comedy films" makes the kind
+    # detector lock onto movie, and every slot but one comes back empty.
+    disliked = disliked_titles(user["id"])
     used, out = set(), []
     for slot in slots:
+        query = f"{taste} {slot['note']} {' '.join(slot['kinds'])}"
+        pool = dual.score_items(engine, query, count=60, disliked=disliked)
         pick = next((i for i in pool
                      if i["kind"] in slot["kinds"] and i["item_id"] not in used), None)
+        if pick is None:
+            # nothing of that kind surfaced for this taste; take the best of
+            # the kind outright rather than leaving a hole in the evening
+            fallback = dual.score_items(engine, " ".join(slot["kinds"]), count=60, disliked=disliked)
+            pick = next((i for i in fallback
+                         if i["kind"] in slot["kinds"] and i["item_id"] not in used), None)
         if pick:
             used.add(pick["item_id"])
         out.append({**slot, "item": pick})
@@ -563,12 +593,35 @@ def reset(optio_session: Optional[str] = Cookie(default=None)):
 
 @app.get("/api/greeting")
 def greeting(optio_session: Optional[str] = Cookie(default=None)):
+    """Open on the question that is actually still unanswered.
+
+    chatbot.py's own greeting always asks for a name. On a return visit the
+    name is already saved, so the user answers a question the server is no
+    longer asking - and their name lands in whichever field really was next.
+    That is why "Iliya" kept turning up under "What you like".
+    """
     user = current_user(optio_session)
     if dual is None or not dual.any_ready:
         return {"text": "The recommender is not loaded yet."}
-    if user:
-        apply_user_context(user)
-    return {"text": dual.primary.bot.greeting()}
+    if not user:
+        return {"text": "Hi, I'm Optio. Sign in and I'll help you decide."}
+
+    apply_user_context(user)
+    stored = db.load_profile(user["id"]) or {}
+    field = next_missing_field(stored)
+    name = stored.get("name")
+
+    if field is None:
+        return {"text": f"Welcome back{', ' + name if name else ''}. "
+                        "What are you in the mood for?",
+                "next_question": None, "profile_complete": True}
+    if field == "name":
+        return {"text": "Hi, I'm Optio. I help you decide what to watch, play, or go to. "
+                        + PROFILE_QUESTIONS["name"],
+                "next_question": PROFILE_QUESTIONS["name"], "profile_complete": False}
+    return {"text": f"Welcome back{', ' + name if name else ''}. "
+                    f"We got as far as this: {PROFILE_QUESTIONS[field]}",
+            "next_question": PROFILE_QUESTIONS[field], "profile_complete": False}
 
 
 # --------------------------------------------------------------------------
