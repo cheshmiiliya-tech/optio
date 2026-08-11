@@ -14,6 +14,7 @@
 param(
     [switch]$Setup,
     [switch]$Check,
+    [switch]$Restart,
     [int]$Port = 8000
 )
 
@@ -115,13 +116,53 @@ if ($best.Info.Version -notlike "3.12*") {
     Write-Host ""
 }
 
+# Only one process can hold a port. Starting a second copy fails with
+# WinError 10048 and a wall of uvicorn noise that never names the culprit,
+# so check first and say who has it.
 $busy = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
 if ($busy) {
-    Write-Host "  Port $Port is already in use by PID $($busy.OwningProcess)." -ForegroundColor Yellow
-    Write-Host "  Optio may already be running - try http://127.0.0.1:$Port first." -ForegroundColor Yellow
-    Write-Host "  To take the port back:  Stop-Process -Id $($busy.OwningProcess) -Force" -ForegroundColor Yellow
+    $holders = @($busy.OwningProcess | Select-Object -Unique)
+
+    $alreadyOptio = $false
+    try {
+        $probe = Invoke-WebRequest "http://127.0.0.1:$Port/api/status" -UseBasicParsing -TimeoutSec 4
+        $alreadyOptio = $probe.StatusCode -eq 200
+    } catch {}
+
+    if ($alreadyOptio -and -not $Restart) {
+        Write-Host "  Optio is already running on port $Port." -ForegroundColor Green
+        Write-Host ""
+        Write-Host "  ->  http://127.0.0.1:$Port" -ForegroundColor Cyan
+        Write-Host ""
+        Write-Host "  Nothing to do. To restart it anyway:  .\run.ps1 -Restart" -ForegroundColor DarkGray
+        Write-Host ""
+        exit 0
+    }
+
+    if (-not $Restart) {
+        Write-Host "  Port $Port is held by PID $($holders -join ', ')." -ForegroundColor Yellow
+        foreach ($procId in $holders) {
+            $p = Get-Process -Id $procId -ErrorAction SilentlyContinue
+            if ($p) { Write-Host "    PID $procId  $($p.ProcessName)" -ForegroundColor DarkGray }
+        }
+        Write-Host ""
+        Write-Host "  Free it and start fresh with:  .\run.ps1 -Restart" -ForegroundColor Yellow
+        Write-Host ""
+        exit 1
+    }
+
+    Write-Host "  Freeing port $Port..." -ForegroundColor Yellow
+    foreach ($procId in $holders) {
+        Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
+    }
+    Start-Sleep -Seconds 2
+    if (Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue) {
+        Write-Host "  Could not free port $Port. Close whatever is using it and try again." -ForegroundColor Red
+        Write-Host ""
+        exit 1
+    }
+    Write-Host "  Port $Port is free." -ForegroundColor Green
     Write-Host ""
-    exit 1
 }
 
 Write-Host "  Starting with $($best.Label) ($($best.Info.Version))" -ForegroundColor Green

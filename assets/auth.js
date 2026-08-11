@@ -76,10 +76,30 @@
       if(data.first_time) sessionStorage.setItem("optio-welcome", "1");
       location.href = BASE + "index.html";
     }catch(err){
-      showError("No server is answering. Start it with:  cd Optio  then  python app.py");
+      showError(noServerMessage());
       btn.disabled = false; btn.textContent = original;
     }
   });
+
+  /* The commonest cause of "no server" is not a stopped server - it is
+     the page being opened from somewhere the server is not: a file://
+     path, or a different port such as VS Code Live Server on 5500/5501.
+     The API is same-origin, so it only answers when the page itself came
+     from the server. Name whichever case this is. */
+  function noServerMessage(){
+    const p = location.protocol, host = location.host;
+    if(p === "file:"){
+      return "This page was opened straight from disk, so there is no server to sign in to. "
+           + "Start it with  cd Optio  then  .\\run.ps1  and open http://127.0.0.1:8000 instead.";
+    }
+    if(host && host.indexOf("127.0.0.1:8000") < 0 && host.indexOf("localhost:8000") < 0
+       && host.indexOf("github.io") < 0){
+      return "This page is being served from " + host + ", but Optio's API runs on port 8000. "
+           + "Open http://127.0.0.1:8000 instead — Live Server cannot run the Python side.";
+    }
+    return "No server is answering on port 8000. Start it with  cd Optio  then  .\\run.ps1 "
+         + "and keep that window open.";
+  }
 
   /* Already signed in? Go straight through.
 
@@ -98,19 +118,31 @@
   })();
 
   function offlineNotice(){
+    const onPages = location.host.indexOf("github.io") >= 0;
     document.getElementById("authForm").hidden = true;
     document.querySelector(".auth-tabs").hidden = true;
     const note = document.getElementById("authNote");
     note.classList.add("auth-offline");
+
+    if(onPages){
+      note.innerHTML =
+          "<b>This is the hosted preview — accounts need the server.</b>"
+        + "<p>GitHub Pages can serve files but cannot run Python, so there is no database "
+        + "here to keep an account in. Everything else works: the catalogue, both models, "
+        + "the comparison and the explanations.</p>"
+        + '<a class="btn btn-primary auth-submit" href="' + BASE + 'index.html">'
+        + 'Continue to the preview</a>'
+        + "<p class='auth-runit'>To get accounts, the trained classifiers and saved history, "
+        + "run it locally:<br><code>cd Optio</code><br><code>.\\run.ps1 -Setup</code></p>";
+      return;
+    }
+
     note.innerHTML =
-        "<b>This is the hosted preview — accounts need the server.</b>"
-      + "<p>GitHub Pages can serve files but cannot run Python, so there is no database "
-      + "here to keep an account in. Everything else works: the catalogue, both models, "
-      + "the comparison and the explanations.</p>"
-      + '<a class="btn btn-primary auth-submit" href="' + BASE + 'index.html">'
-      + 'Continue to the preview</a>'
-      + "<p class='auth-runit'>To get accounts, the trained classifiers and saved history, "
-      + "run it locally:<br><code>cd Optio</code><br><code>pip install -r requirements.txt</code><br>"
-      + "<code>python app.py</code></p>";
+        "<b>Nothing is answering yet.</b>"
+      + "<p>" + noServerMessage() + "</p>"
+      + '<a class="btn btn-primary auth-submit" href="http://127.0.0.1:8000/login.html">'
+      + 'Try http://127.0.0.1:8000</a>'
+      + "<p class='auth-runit'>Start the server:<br><code>cd Optio</code><br>"
+      + "<code>.\\run.ps1</code><br>then keep that window open.</p>";
   }
 })();
