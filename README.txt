@@ -8,10 +8,10 @@
   Live preview   https://cheshmiiliya-tech.github.io/optio/
   Source         https://github.com/cheshmiiliya-tech/optio
 
-  Iliya Cheshmi    Interface
-  Reza Shahbazi    Interface
-  Hosna Zandavi    Models
-  Radin Jalab      Models
+  Iliya Cheshmi          Interface
+  Reza Shahbazi          Interface
+  Hosna Sadat Zandavi    Models
+  Radin Jallab           Models
 
 
 -------------------------------------------------------------------------------

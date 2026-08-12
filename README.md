@@ -227,8 +227,8 @@ be a person and it is not a language model.
 |---|---|
 | **Iliya Cheshmi** | UI |
 | **Reza Shahbazi** | UI |
-| **Hosna Zandavi** | AI |
-| **Radin Jalab** | AI |
+| **Hosna Sadat Zandavi** | AI |
+| **Radin Jallab** | AI |
 
 Data: MovieLens (GroupLens) · Free Music Archive · Spotify song metadata ·
 Fáilte Ireland Open Data · ThemeParks.wiki. All titles belong to their sources.
